@@ -6,6 +6,8 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.reactive import Reactive
+from textual.theme import Theme
 from textual.widgets import Button, Static, Tab, Tabs
 
 from . import APP_NAME
@@ -46,6 +48,18 @@ class TodoApp(App[None]):
 
     CSS_PATH = "app.tcss"
     TITLE = APP_NAME
+    theme = Reactive(DEFAULT_THEME)
+
+    def register_theme(self, theme: Theme) -> None:
+        """Register the custom themes while Textual initializes its built-ins.
+
+        The base ``App`` builds its initial stylesheet before subclass
+        ``__init__`` code runs, so registering the custom themes here ensures
+        the saved theme is available for that first stylesheet.
+        """
+        super().register_theme(theme)
+        for custom_theme in CUSTOM_THEMES:
+            super().register_theme(custom_theme)
 
     BINDINGS = [
         Binding("n", "add", "New"),
@@ -71,7 +85,8 @@ class TodoApp(App[None]):
     ]
 
     def __init__(self, store: TodoStore) -> None:
-        super().__init__()
+        # Set ANSI handling up front so transparency works in the first frame.
+        super().__init__(ansi_color=True if store.transparent else None)
         self.store = store
         self.view: str | None = None
         self.active_group = store.groups[0] if store.groups else DEFAULT_GROUP
@@ -82,18 +97,45 @@ class TodoApp(App[None]):
         self.main_screen: MainScreen | None = None
         self._tab_views: dict[str, str | None] = {}
         self._syncing_tabs = False
-        self.transparent_background = False
-        for theme in CUSTOM_THEMES:
-            self.register_theme(theme)
+        self.transparent_background = store.transparent
+        # Apply the startup appearance before the stylesheet is first parsed.
+        self.set_class(store.transparent, "-transparent")
 
     def get_default_screen(self) -> MainScreen:
-        self.main_screen = MainScreen()
-        return self.main_screen
+        screen = MainScreen()
+        screen.set_class(self.transparent_background, "-transparent")
+        self.main_screen = screen
+        return screen
+
+    def _make_tab_widgets(self) -> list[Tab]:
+        """Create the view tabs from the store's current groups."""
+        self._tab_views = {}
+        entries: list[tuple[str | None, str]] = [(None, "All")]
+        entries.extend((group, group) for group in self.store.groups)
+        tabs: list[Tab] = []
+        for index, (view, name) in enumerate(entries):
+            tab_id = "view-all" if view is None else f"view-{index}"
+            label = "All" if view is None else shorten(name, 18)
+            tab = Tab(Text(label), id=tab_id)
+            if view is not None:
+                tab.tooltip = f"View {name}"
+            tabs.append(tab)
+            self._tab_views[tab_id] = view
+        return tabs
 
     def compose(self) -> ComposeResult:
+        # Build the complete first frame here. Mounting empty widgets and then
+        # filling them from on_mount costs an extra layout pass.
+        rows = self._rows()
+        ids = visible_todo_ids(rows)
+        self.selected_id = ids[0] if ids else None
         yield HeaderBar(id="app-header")
-        yield ViewTabs(id="views")
-        yield TodoList()
+        yield ViewTabs(
+            *self._make_tab_widgets(),
+            active="view-all",
+            id="views",
+        )
+        yield TodoList(rows, self.selected_id, self._empty_message())
         yield Static("", id="status", markup=False)
         yield ActionBar(id="actions")
         yield Static("", id="help", markup=False)
@@ -130,14 +172,11 @@ class TodoApp(App[None]):
     async def on_mount(self) -> None:
         if self.main_screen is None:
             self.main_screen = self.screen  # type: ignore[assignment]
-        self.theme = (
+        saved_theme = (
             self.store.theme if self.store.theme in THEME_IDS else DEFAULT_THEME
         )
-        self.transparent_background = self.store.transparent
-        self._apply_transparency()
-        self.selected_id = self._first_visible_id()
-        await self._rebuild_tabs()
-        await self._refresh_rows()
+        if saved_theme != self.theme:
+            self.theme = saved_theme
         self._update_chrome()
 
     def on_resize(self, event: events.Resize) -> None:
@@ -152,10 +191,6 @@ class TodoApp(App[None]):
 
     def _visible_ids(self) -> list[str]:
         return visible_todo_ids(self._rows())
-
-    def _first_visible_id(self) -> str | None:
-        ids = self._visible_ids()
-        return ids[0] if ids else None
 
     def _selected_todo(self):
         return self.store.get(self.selected_id)
@@ -333,17 +368,8 @@ class TodoApp(App[None]):
         self._syncing_tabs = True
         try:
             await tabs.clear()
-            self._tab_views = {}
-            entries: list[tuple[str | None, str]] = [(None, "All")]
-            entries.extend((group, group) for group in self.store.groups)
-            for index, (view, name) in enumerate(entries):
-                tab_id = "view-all" if view is None else f"view-{index}"
-                label = "All" if view is None else shorten(name, 18)
-                tab = Tab(Text(label), id=tab_id)
-                if view is not None:
-                    tab.tooltip = f"View {name}"
+            for tab in self._make_tab_widgets():
                 await tabs.add_tab(tab)
-                self._tab_views[tab_id] = view
         finally:
             self._syncing_tabs = False
         self._sync_tabs()

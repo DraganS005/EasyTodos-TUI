@@ -126,10 +126,42 @@ class TodoList(VerticalScroll):
 
     can_focus = False
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        rows: list[Row] | None = None,
+        selected_id: str | None = None,
+        empty_message: str = "",
+    ) -> None:
         super().__init__(id="todo-list")
-        self._selected_id: str | None = None
+        self._selected_id = selected_id
+        self._initial_rows = rows or []
+        self._initial_empty_message = empty_message
         self._rebuild_lock = asyncio.Lock()
+
+    @staticmethod
+    def _row_widgets(
+        rows: list[Row],
+        selected_id: str | None,
+        empty_message: str,
+    ) -> list[Static]:
+        widgets: list[Static] = []
+        first_group = True
+        for row in rows:
+            if row.kind == "group":
+                widgets.append(GroupHeader(row, first=first_group))
+                first_group = False
+            elif row.todo is not None:
+                widgets.append(TodoRow(row.todo, selected=row.todo.id == selected_id))
+        if not widgets:
+            widgets.append(EmptyState(empty_message))
+        return widgets
+
+    def compose(self) -> ComposeResult:
+        yield from self._row_widgets(
+            self._initial_rows,
+            self._selected_id,
+            self._initial_empty_message,
+        )
 
     async def rebuild(
         self,
@@ -141,19 +173,7 @@ class TodoList(VerticalScroll):
             self._selected_id = selected_id
             await self.remove_children()
 
-            widgets = []
-            first_group = True
-            for row in rows:
-                if row.kind == "group":
-                    widgets.append(GroupHeader(row, first=first_group))
-                    first_group = False
-                elif row.todo is not None:
-                    widgets.append(
-                        TodoRow(row.todo, selected=row.todo.id == selected_id)
-                    )
-            if not widgets:
-                widgets.append(EmptyState(empty_message))
-
+            widgets = self._row_widgets(rows, selected_id, empty_message)
             await self.mount_all(widgets)
             self.refresh(layout=True)
             self.call_after_refresh(self._scroll_selected)
