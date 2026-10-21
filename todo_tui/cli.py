@@ -1,0 +1,67 @@
+"""Command-line entry point."""
+
+from __future__ import annotations
+
+import argparse
+import curses
+import locale
+import sys
+from pathlib import Path
+from typing import Sequence
+
+from . import __version__
+from .model import StoreError, TodoStore
+from .ui import TodoApp
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="todo-tui",
+        description="A small terminal todo list with groups, persisted to JSON.",
+        epilog=(
+            "Data file: $TODO_TUI_FILE, or $XDG_DATA_HOME/todo-tui/todos.json "
+            "(defaults to ~/.local/share/todo-tui/todos.json)."
+        ),
+    )
+    parser.add_argument(
+        "-f",
+        "--file",
+        type=Path,
+        metavar="PATH",
+        help="use a specific data file instead of the default location",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    path = args.file.expanduser() if args.file is not None else TodoStore.default_path()
+
+    try:
+        store = TodoStore(path)
+    except StoreError as exc:
+        print(f"todo-tui: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+
+    try:
+        curses.wrapper(lambda stdscr: TodoApp(stdscr, store).run())
+    except KeyboardInterrupt:
+        return 130
+    except curses.error as exc:
+        print(
+            f"todo-tui: could not start the interface ({exc}). "
+            "Run this in an interactive terminal.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
