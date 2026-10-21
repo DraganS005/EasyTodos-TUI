@@ -1,428 +1,416 @@
-"""Curses interface for the todo app."""
+"""Textual interface for the todo app."""
 
 from __future__ import annotations
 
-import curses
-import unicodedata
+from rich.text import Text
+from textual import events, on
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.widgets import Button, Static, Tab, Tabs
 
 from .model import (
     DEFAULT_GROUP,
+    DEFAULT_THEME,
     MAX_GROUP_LENGTH,
-    MAX_TEXT_LENGTH,
-    Todo,
-    TodoStore,
     StoreError,
+    TodoStore,
 )
-from .view import Row, build_rows, visible_todo_ids
-
-_NEW_GROUP = object()
-_NEW_GROUP_LABEL = "+ New group..."
-
-
-def _width(text: str) -> int:
-    total = 0
-    for char in text:
-        if unicodedata.combining(char):
-            continue
-        total += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-    return total
-
-
-def _clip(text: str, max_width: int) -> str:
-    """Clip text to a terminal column width without splitting wide characters."""
-    if max_width <= 0:
-        return ""
-    kept: list[str] = []
-    used = 0
-    for char in text:
-        if not char.isprintable() and not unicodedata.combining(char):
-            char = " "
-        char_width = _width(char)
-        if used + char_width > max_width:
-            break
-        kept.append(char)
-        used += char_width
-    return "".join(kept)
+from .themes import (
+    CUSTOM_THEMES,
+    THEME_CHOICES,
+    THEME_IDS,
+    ThemeSelection,
+    get_theme_choice,
+)
+from .view import build_rows, visible_todo_ids
+from .widgets import (
+    NEW_GROUP_CHOICE,
+    ActionBar,
+    ActionButton,
+    GroupClicked,
+    GroupPickerModal,
+    HeaderBar,
+    MainScreen,
+    TextPromptModal,
+    ThemePickerModal,
+    TodoClicked,
+    TodoList,
+    ViewTabs,
+    shorten,
+)
 
 
-def _shorten(text: str, limit: int = 30) -> str:
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+class TodoApp(App[None]):
+    """A compact, mouse-friendly terminal todo list."""
 
+    CSS_PATH = "app.tcss"
+    TITLE = "TODO"
 
-def _win_put(
-    win: "curses.window",
-    y: int,
-    x: int,
-    text: str,
-    limit: int,
-    attr: int = 0,
-) -> None:
-    clipped = _clip(text, limit)
-    if not clipped:
-        return
-    try:
-        win.addstr(y, x, clipped, attr)
-    except curses.error:
-        pass
+    BINDINGS = [
+        Binding("n", "add", "New"),
+        Binding("a", "add", "New", show=False),
+        Binding("space", "toggle", "Check"),
+        Binding("enter", "toggle", "Check", show=False),
+        Binding("x", "toggle", "Check", show=False),
+        Binding("d", "delete", "Delete"),
+        Binding("delete", "delete", "Delete", show=False),
+        Binding("g", "move", "Group"),
+        Binding("G", "new_group", "New group"),
+        Binding("h", "toggle_done", "Hide done"),
+        Binding("t", "theme", "Theme"),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("left", "previous_view", "Previous view", show=False),
+        Binding("right", "next_view", "Next view", show=False),
+        Binding("[", "previous_view", "Previous view", show=False),
+        Binding("]", "next_view", "Next view", show=False),
+        Binding("q", "quit", "Quit"),
+    ]
 
-
-class TodoApp:
-    def __init__(self, stdscr: "curses.window", store: TodoStore) -> None:
-        self.stdscr = stdscr
+    def __init__(self, store: TodoStore) -> None:
+        super().__init__()
         self.store = store
-        self.view: str | None = None  # None means all groups
+        self.view: str | None = None
         self.active_group = store.groups[0] if store.groups else DEFAULT_GROUP
         self.selected_id: str | None = None
-        self.scroll = 0
         self.show_done = True
         self.message = ""
-        self.message_error = False
+        self.message_is_error = False
+        self.main_screen: MainScreen | None = None
+        self._tab_views: dict[str, str | None] = {}
+        self._syncing_tabs = False
+        self.transparent_background = False
+        for theme in CUSTOM_THEMES:
+            self.register_theme(theme)
 
-        self.attr_title = curses.A_BOLD
-        self.attr_group = curses.A_BOLD
-        self.attr_done = curses.A_DIM
-        self.attr_status = 0
-        self.attr_error = curses.A_BOLD
-        self.attr_accent = curses.A_REVERSE | curses.A_BOLD
-        self.attr_dim = curses.A_DIM
+    def get_default_screen(self) -> MainScreen:
+        self.main_screen = MainScreen()
+        return self.main_screen
 
-    # -- setup and main loop -------------------------------------------------
+    def compose(self) -> ComposeResult:
+        yield HeaderBar(id="app-header")
+        yield ViewTabs(id="views")
+        yield TodoList()
+        yield Static("", id="status", markup=False)
+        yield ActionBar(id="actions")
+        yield Static("", id="help", markup=False)
 
-    def _setup(self) -> None:
-        try:
-            curses.curs_set(0)
-        except curses.error:
-            pass
-        try:
-            curses.set_escdelay(25)
-        except (AttributeError, curses.error):
-            pass
-        self.stdscr.keypad(True)
+    _MAIN_ACTIONS = frozenset(
+        {
+            "add",
+            "toggle",
+            "delete",
+            "move",
+            "new_group",
+            "toggle_done",
+            "theme",
+            "cursor_down",
+            "cursor_up",
+            "previous_view",
+            "next_view",
+            "quit",
+        }
+    )
 
-        if not curses.has_colors():
-            return
-        try:
-            curses.start_color()
-            try:
-                curses.use_default_colors()
-            except curses.error:
-                pass
-            self.attr_title = curses.A_BOLD | self._color(1, curses.COLOR_CYAN)
-            self.attr_group = curses.A_BOLD | self._color(2, curses.COLOR_YELLOW)
-            self.attr_done = curses.A_DIM | self._color(3, curses.COLOR_GREEN)
-            self.attr_status = self._color(4, curses.COLOR_CYAN)
-            self.attr_error = curses.A_BOLD | self._color(5, curses.COLOR_RED)
-            self.attr_accent = curses.A_BOLD | self._color(6, curses.COLOR_MAGENTA)
-        except curses.error:
-            pass
-
-    @staticmethod
-    def _color(pair: int, foreground: int) -> int:
-        try:
-            curses.init_pair(pair, foreground, -1)
-        except curses.error:
-            try:
-                curses.init_pair(pair, foreground, curses.COLOR_BLACK)
-            except curses.error:
-                return 0
-        return curses.color_pair(pair)
-
-    def run(self) -> None:
-        self._setup()
-        try:
-            while True:
-                self.draw()
-                try:
-                    key = self.stdscr.get_wch()
-                except curses.error:
-                    continue
-                except KeyboardInterrupt:
-                    break
-                if not self._handle_key(key):
-                    break
-        finally:
-            try:
-                curses.curs_set(1)
-            except curses.error:
-                pass
-
-    # -- drawing -------------------------------------------------------------
-
-    def _put(
-        self,
-        y: int,
-        x: int,
-        text: str,
-        attr: int = 0,
-        limit: int | None = None,
-    ) -> None:
-        try:
-            height, width = self.stdscr.getmaxyx()
-        except curses.error:
-            return
-        if y < 0 or y >= height or x < 0 or x >= width:
-            return
-        available = width - x - 1
-        if limit is not None:
-            available = min(available, limit)
-        if available <= 0 or not text:
-            return
-        clipped = _clip(str(text), available)
-        if not clipped:
-            return
-        try:
-            self.stdscr.addstr(y, x, clipped, attr)
-        except curses.error:
-            pass
-
-    def draw(self) -> None:
-        self.stdscr.erase()
-        try:
-            height, width = self.stdscr.getmaxyx()
-        except curses.error:
-            return
-
-        if height < 7 or width < 30:
-            self._put(0, 0, "Terminal too small.", self.attr_error)
-            self._put(1, 0, "Resize the window, or press q to quit.", self.attr_dim)
-            self.stdscr.refresh()
-            return
-
-        self._put(0, 1, "TODO", self.attr_title)
-        self._put(0, 7, "grouped todo list", self.attr_dim)
-        self._draw_tabs(width)
-
-        try:
-            self.stdscr.hline(2, 0, curses.ACS_HLINE, width - 1, self.attr_dim)
-        except curses.error:
-            pass
-
-        rows = build_rows(self.store, self.view, self.show_done)
-        self._draw_rows(rows, height, width)
-        self._draw_status(height, width)
-        self._draw_help(height, width)
-        self.stdscr.refresh()
-
-    def _draw_tabs(self, width: int) -> None:
-        self._put(1, 1, "View", self.attr_dim)
-        entries: list[tuple[str | None, str]] = [(None, "All")]
-        entries.extend((group, group) for group in self.store.groups)
-
-        tokens: list[str] = []
-        attrs: list[int] = []
-        for view, name in entries:
-            if view == self.view:
-                tokens.append(f"[{name}]")
-                attrs.append(self.attr_accent)
-            else:
-                tokens.append(f" {name} ")
-                attrs.append(self.attr_dim)
-
-        active_index = next(
-            (index for index, (view, _) in enumerate(entries) if view == self.view),
-            0,
-        )
-        available = width - 7
-        start = 0
-        total = sum(_width(token) + 1 for token in tokens)
-        # Scroll the tab strip so the active view stays visible.
-        while start < active_index and total > available:
-            total -= _width(tokens[start]) + 1
-            start += 1
-        if start > 0:
-            while total + 2 > available and start < active_index:
-                total -= _width(tokens[start]) + 1
-                start += 1
-
-        x = 6
-        if start > 0:
-            self._put(1, x, "< ", self.attr_dim)
-            x += 2
-        for index in range(start, len(tokens)):
-            token = tokens[index]
-            if x + _width(token) > width - 1:
-                break
-            self._put(1, x, token, attrs[index])
-            x += _width(token) + 1
-
-    def _draw_rows(self, rows: list[Row], height: int, width: int) -> None:
-        top = 3
-        list_height = height - 5
-        if list_height < 1:
-            return
-
-        ids = visible_todo_ids(rows)
-        if not ids:
-            self.selected_id = None
-        elif self.selected_id not in ids:
-            self.selected_id = ids[0]
-
-        selected_row = 0
-        if self.selected_id is not None:
-            for index, row in enumerate(rows):
-                if row.todo is not None and row.todo.id == self.selected_id:
-                    selected_row = index
-                    break
-
-        if selected_row < self.scroll:
-            self.scroll = selected_row
-        elif selected_row >= self.scroll + list_height:
-            self.scroll = selected_row - list_height + 1
-        self.scroll = max(0, min(self.scroll, max(0, len(rows) - list_height)))
-
-        if not rows:
-            if not self.store.todos:
-                message = "No todos yet. Press n to add one."
-            elif self.view is not None:
-                message = f"No todos in {self.view}. Press n to add one."
-            elif not self.show_done and self.store.done_count:
-                message = "Nothing open here. Press h to show completed todos."
-            else:
-                message = "Nothing to show."
-            x = max(1, (width - len(message)) // 2)
-            self._put(top + list_height // 2, x, message, self.attr_dim)
-            return
-
-        for line, row in enumerate(rows[self.scroll : self.scroll + list_height]):
-            y = top + line
-            if row.kind == "group":
-                label = f"{row.group}  ({row.done}/{row.total} done)"
-                self._put(y, 1, label, self.attr_group)
-                continue
-
-            todo = row.todo
-            if todo is None:
-                continue
-            checkbox = "[x]" if todo.done else "[ ]"
-            text = todo.text.replace("\n", " ").replace("\r", " ")
-            line_text = f"  {checkbox} {text}"
-
-            attr = self.attr_done if todo.done else 0
-            if todo.id == self.selected_id:
-                attr |= curses.A_REVERSE
-                line_text = line_text.ljust(width - 2)
-            self._put(y, 0, line_text, attr, width - 1)
-
-    def _draw_status(self, height: int, width: int) -> None:
-        y = height - 2
-        counts = f"{self.store.open_count} open, {self.store.done_count} done"
-        counts_x = max(1, width - len(counts) - 1)
-
-        left = self.message or (
-            f"Viewing {self.view}" if self.view is not None else "Viewing all groups"
-        )
-        if self.message:
-            attr = self.attr_error if self.message_error else self.attr_status
-        else:
-            attr = self.attr_dim
-        limit = max(0, counts_x - 3)
-        if limit > 0:
-            self._put(y, 1, left, attr, limit)
-        self._put(y, counts_x, counts, self.attr_dim)
-
-    def _draw_help(self, height: int, width: int) -> None:
-        hide = "hide" if self.show_done else "show"
-        if width >= 92:
-            help_text = (
-                f"n new   space toggle   d delete   g group   G new group   "
-                f"tab view   h {hide} done   q quit"
-            )
-        elif width >= 76:
-            help_text = (
-                f"n new  space toggle  d del  g group  G new  "
-                f"tab view  h {hide} done  q quit"
-            )
-        elif width >= 61:
-            help_text = (
-                f"n new  spc check  d del  g group  tab view  h {hide}  q quit"
-            )
-        elif width >= 54:
-            help_text = (
-                f"n new  spc check  d del  g grp  tab  h {hide}  q quit"
-            )
-        elif width >= 47:
-            help_text = f"n new  spc  d del  g grp  tab  h {hide}  q quit"
-        elif width >= 42:
-            help_text = f"n new  spc  d del  g grp  h {hide}  q quit"
-        else:
-            help_text = "n add  spc  d del  q quit"
-        self._put(height - 1, 1, help_text, self.attr_dim, width - 2)
-
-    # -- key handling --------------------------------------------------------
-
-    def _handle_key(self, key: str | int) -> bool:
-        if isinstance(key, str):
-            if key == "q" or key == "\x03":
-                return False
-            if key == "n" or key == "a":
-                self._add_todo()
-            elif key in (" ", "\n", "\r", "x"):
-                self._toggle_selected()
-            elif key == "d":
-                self._delete_selected()
-            elif key == "g":
-                self._move_selected()
-            elif key == "G":
-                self._new_group()
-            elif key == "\t":
-                self._cycle_view(1)
-            elif key == "h":
-                self.show_done = not self.show_done
-                self.message = "Showing completed todos." if self.show_done else "Hiding completed todos."
-                self.message_error = False
-            elif key in ("j", "J"):
-                self._move_selection(1)
-            elif key in ("k", "K"):
-                self._move_selection(-1)
-            return True
-
-        if key == curses.KEY_RESIZE:
-            return True
-        if key == curses.KEY_UP:
-            self._move_selection(-1)
-        elif key == curses.KEY_DOWN:
-            self._move_selection(1)
-        elif key == curses.KEY_BTAB:
-            self._cycle_view(-1)
-        elif key in (curses.KEY_ENTER,):
-            self._toggle_selected()
-        elif key == curses.KEY_DC:
-            self._delete_selected()
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool:
+        """Keep main-screen shortcuts from firing behind a modal."""
+        if (
+            self.main_screen is not None
+            and self.screen is not self.main_screen
+            and action in self._MAIN_ACTIONS
+        ):
+            return False
         return True
 
-    def _selected_todo(self) -> Todo | None:
+    # -- lifecycle -----------------------------------------------------------
+
+    async def on_mount(self) -> None:
+        if self.main_screen is None:
+            self.main_screen = self.screen  # type: ignore[assignment]
+        self.theme = (
+            self.store.theme if self.store.theme in THEME_IDS else DEFAULT_THEME
+        )
+        self.transparent_background = self.store.transparent
+        self._apply_transparency()
+        self.selected_id = self._first_visible_id()
+        await self._rebuild_tabs()
+        await self._refresh_rows()
+        self._update_chrome()
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.main_screen is not None and self.main_screen.is_mounted:
+            self.call_after_refresh(self._update_chrome)
+            self.call_after_refresh(self._scroll_selected)
+
+    # -- state helpers -------------------------------------------------------
+
+    def _rows(self):
+        return build_rows(self.store, self.view, self.show_done)
+
+    def _visible_ids(self) -> list[str]:
+        return visible_todo_ids(self._rows())
+
+    def _first_visible_id(self) -> str | None:
+        ids = self._visible_ids()
+        return ids[0] if ids else None
+
+    def _selected_todo(self):
         return self.store.get(self.selected_id)
 
-    def _move_selection(self, delta: int) -> None:
-        ids = visible_todo_ids(build_rows(self.store, self.view, self.show_done))
-        if not ids:
-            self.selected_id = None
-            return
-        if self.selected_id not in ids:
-            self.selected_id = ids[0] if delta >= 0 else ids[-1]
-            return
-        index = ids.index(self.selected_id)
-        self.selected_id = ids[max(0, min(len(ids) - 1, index + delta))]
+    def _empty_message(self) -> str:
+        if not self.store.todos:
+            return "No todos yet. Press n or click New."
+        in_view = [
+            todo
+            for todo in self.store.todos
+            if self.view is None or todo.group == self.view
+        ]
+        if not in_view:
+            return f"No todos in {self.view}. Press n or click New."
+        if not self.show_done and any(todo.done for todo in in_view):
+            where = f" in {self.view}" if self.view is not None else " here"
+            return f"Nothing open{where}. Press h to show completed todos."
+        return "Nothing to show."
 
-    def _cycle_view(self, step: int) -> None:
+    def _set_message(self, message: str, *, error: bool = False) -> None:
+        self.message = message
+        self.message_is_error = error
+        self._update_chrome()
+
+    def _error(self, message: str) -> None:
+        self._set_message(message, error=True)
+        self.notify(message, severity="error", timeout=5)
+
+    @staticmethod
+    def _nearest_id(
+        old_ids: list[str],
+        selected_id: str | None,
+        new_ids: list[str],
+    ) -> str | None:
+        """Keep the selection stable when the selected row disappears."""
+        if selected_id in new_ids:
+            return selected_id
+        if not new_ids:
+            return None
+        try:
+            index = old_ids.index(selected_id) if selected_id is not None else 0
+        except ValueError:
+            index = 0
+        return new_ids[min(index, len(new_ids) - 1)]
+
+    def _item_list(self) -> TodoList:
+        assert self.main_screen is not None
+        return self.main_screen.query_one("#todo-list", TodoList)
+
+    def _apply_selection(self) -> None:
+        self._item_list().select(self.selected_id)
+
+    def _scroll_selected(self) -> None:
+        self._item_list()._scroll_selected()
+
+    async def _refresh_rows(self) -> None:
+        """Rebuild the visible list from the store, then refresh the chrome."""
+        rows = self._rows()
+        ids = visible_todo_ids(rows)
+        if self.selected_id not in ids:
+            self.selected_id = ids[0] if ids else None
+        await self._item_list().rebuild(
+            rows,
+            self.selected_id,
+            self._empty_message(),
+        )
+        self._update_chrome()
+
+    # -- chrome --------------------------------------------------------------
+
+    def _update_chrome(self) -> None:
+        if self.main_screen is None or not self.main_screen.is_mounted:
+            return
+        screen = self.main_screen
+        width, height = screen.size
+        tiny = width < 50 or height < 11
+        compact = width < 80 or height < 20
+
+        screen.query_one("#app-stats", Static).update(
+            f"{self.store.open_count} open, {self.store.done_count} done"
+        )
+
+        if self.message:
+            status = self.message
+            screen.query_one("#status", Static).set_class(
+                self.message_is_error, "-error"
+            )
+        else:
+            status = (
+                f"Viewing {self.view}"
+                if self.view is not None
+                else "Viewing all groups"
+            )
+            screen.query_one("#status", Static).remove_class("-error")
+        screen.query_one("#status", Static).update(status)
+
+        screen.query_one("#help", Static).update(
+            self._help_text(width, compact, tiny)
+        )
+
+        has_selection = self._selected_todo() is not None
+        for button_id in ("btn-toggle", "btn-group", "btn-delete"):
+            screen.query_one(f"#{button_id}", ActionButton).disabled = not has_selection
+
+        hide_label = "Hide done" if self.show_done else "Show done"
+        if tiny:
+            labels = {
+                "btn-new": "+",
+                "btn-toggle": "ok",
+                "btn-group": "g",
+                "btn-delete": "x",
+                "btn-hide": "hide",
+                "btn-theme": "t",
+                "btn-quit": "quit",
+            }
+        elif compact:
+            labels = {
+                "btn-new": "+ New",
+                "btn-toggle": "Check",
+                "btn-group": "Group",
+                "btn-delete": "Del",
+                "btn-hide": "Hide" if self.show_done else "Show",
+                "btn-theme": "Theme",
+                "btn-quit": "Quit",
+            }
+        else:
+            labels = {
+                "btn-new": "New",
+                "btn-toggle": "Check",
+                "btn-group": "Group",
+                "btn-delete": "Delete",
+                "btn-hide": hide_label,
+                "btn-theme": "Theme",
+                "btn-quit": "Quit",
+            }
+        for button_id, label in labels.items():
+            screen.query_one(f"#{button_id}", ActionButton).label = label
+
+    def _help_text(self, width: int, compact: bool, tiny: bool) -> str:
+        if tiny or compact:
+            return ""
+        hide = "hide done" if self.show_done else "show done"
+        if width >= 100:
+            return (
+                "n new   space check   d delete   g group   G new group   "
+                f"t theme   tab view   h {hide}   q quit"
+            )
+        short_hide = "hide" if self.show_done else "show"
+        return (
+            "n new  space check  d del  g group  G new  t theme  "
+            f"tab view  h {short_hide}  q quit"
+        )
+
+    # -- tabs ----------------------------------------------------------------
+
+    def _sync_tabs(self) -> None:
+        if self.main_screen is None:
+            return
+        tabs = self.main_screen.query_one("#views", Tabs)
+        tab_id = next(
+            (key for key, view in self._tab_views.items() if view == self.view),
+            None,
+        )
+        if tab_id is not None and tabs.active != tab_id:
+            self._syncing_tabs = True
+            try:
+                tabs.active = tab_id
+            finally:
+                self._syncing_tabs = False
+
+    async def _rebuild_tabs(self) -> None:
+        if self.main_screen is None:
+            return
+        tabs = self.main_screen.query_one("#views", ViewTabs)
+        self._syncing_tabs = True
+        try:
+            await tabs.clear()
+            self._tab_views = {}
+            entries: list[tuple[str | None, str]] = [(None, "All")]
+            entries.extend((group, group) for group in self.store.groups)
+            for index, (view, name) in enumerate(entries):
+                tab_id = "view-all" if view is None else f"view-{index}"
+                label = "All" if view is None else shorten(name, 18)
+                tab = Tab(Text(label), id=tab_id)
+                if view is not None:
+                    tab.tooltip = f"View {name}"
+                await tabs.add_tab(tab)
+                self._tab_views[tab_id] = view
+        finally:
+            self._syncing_tabs = False
+        self._sync_tabs()
+
+    @on(Tabs.TabActivated)
+    async def _tab_activated(self, event: Tabs.TabActivated) -> None:
+        if self._syncing_tabs or event.tab.id is None:
+            return
+        if event.tab.id not in self._tab_views:
+            return
+        view = self._tab_views[event.tab.id]
+        if view == self.view:
+            return
+        await self._set_view(view, sync_tabs=False)
+
+    async def _set_view(self, view: str | None, *, sync_tabs: bool = True) -> None:
+        if view is not None and view not in self.store.groups:
+            return
+        self.view = view
+        if view is not None:
+            self.active_group = view
+        self.selected_id = None
+        if sync_tabs:
+            self._sync_tabs()
+        await self._refresh_rows()
+        label = self.view if self.view is not None else "all groups"
+        self._set_message(f"Viewing {label}.")
+
+    # -- view navigation -----------------------------------------------------
+
+    async def action_next_view(self) -> None:
+        await self._cycle_view(1)
+
+    async def action_previous_view(self) -> None:
+        await self._cycle_view(-1)
+
+    async def _cycle_view(self, step: int) -> None:
         views: list[str | None] = [None, *self.store.groups]
         try:
             index = views.index(self.view)
         except ValueError:
             index = 0
-        self.view = views[(index + step) % len(views)]
-        if self.view is not None:
-            self.active_group = self.view
-        self.selected_id = None
-        self.scroll = 0
-        label = self.view if self.view is not None else "all groups"
-        self.message = f"Viewing {label}."
-        self.message_error = False
+        await self._set_view(views[(index + step) % len(views)])
 
-    def _add_todo(self) -> None:
+    # -- cursor --------------------------------------------------------------
+
+    def _move_cursor(self, delta: int) -> None:
+        ids = self._visible_ids()
+        if not ids:
+            self.selected_id = None
+            self._apply_selection()
+            return
+        if self.selected_id not in ids:
+            self.selected_id = ids[0] if delta >= 0 else ids[-1]
+        else:
+            index = ids.index(self.selected_id)
+            self.selected_id = ids[max(0, min(len(ids) - 1, index + delta))]
+        self._apply_selection()
+
+    def action_cursor_down(self) -> None:
+        self._move_cursor(1)
+
+    def action_cursor_up(self) -> None:
+        self._move_cursor(-1)
+
+    # -- todo actions --------------------------------------------------------
+
+    def action_add(self) -> None:
         selected = self._selected_todo()
         if self.view is not None:
             group = self.view
@@ -432,9 +420,19 @@ class TodoApp:
             group = self.active_group
         if group not in self.store.groups:
             group = DEFAULT_GROUP
-        text = self.prompt(f"New todo in {group}")
-        if not text:
-            return
+        self.push_screen(
+            TextPromptModal(
+                f"New todo in {group}",
+                placeholder="What needs doing?",
+            ),
+            callback=lambda text: self._on_add_result(text, group),
+        )
+
+    def _on_add_result(self, text: str | None, group: str) -> None:
+        if text:
+            self.run_worker(self._create_todo(text, group), exclusive=False)
+
+    async def _create_todo(self, text: str, group: str) -> None:
         try:
             todo = self.store.add(text, group)
         except (ValueError, StoreError) as exc:
@@ -442,269 +440,254 @@ class TodoApp:
             return
         self.active_group = todo.group
         self.selected_id = todo.id
-        self.message = f"Added to {todo.group}."
-        self.message_error = False
+        await self._refresh_rows()
+        self._set_message(f"Added to {todo.group}.")
 
-    def _toggle_selected(self) -> None:
-        todo = self._selected_todo()
+    async def _toggle(self, todo_id: str) -> None:
+        todo = self.store.get(todo_id)
         if todo is None:
             return
+        old_ids = self._visible_ids()
+        self.selected_id = todo_id
         try:
             updated = self.store.toggle(todo.id)
         except StoreError as exc:
             self._error(str(exc))
             return
+        new_ids = self._visible_ids()
+        self.selected_id = self._nearest_id(old_ids, todo_id, new_ids)
+        await self._refresh_rows()
         if updated is not None:
-            self.message = (
-                f"Checked off: {_shorten(updated.text, 28)}"
+            self._set_message(
+                f"Checked off: {shorten(updated.text)}"
                 if updated.done
-                else f"Reopened: {_shorten(updated.text, 28)}"
+                else f"Reopened: {shorten(updated.text)}"
             )
-            self.message_error = False
 
-    def _delete_selected(self) -> None:
+    async def action_toggle(self) -> None:
+        if self.selected_id is not None:
+            await self._toggle(self.selected_id)
+
+    async def action_delete(self) -> None:
         todo = self._selected_todo()
+        if todo is not None:
+            await self._delete_todo(todo.id)
+
+    async def _delete_todo(self, todo_id: str) -> None:
+        todo = self.store.get(todo_id)
         if todo is None:
             return
-        ids = visible_todo_ids(build_rows(self.store, self.view, self.show_done))
-        try:
-            index = ids.index(todo.id)
-        except ValueError:
-            index = 0
+        old_ids = self._visible_ids()
         try:
             self.store.delete(todo.id)
         except StoreError as exc:
             self._error(str(exc))
             return
+        self.selected_id = self._nearest_id(old_ids, todo_id, self._visible_ids())
+        await self._refresh_rows()
+        self._set_message(f"Deleted: {shorten(todo.text)}")
 
-        remaining = visible_todo_ids(build_rows(self.store, self.view, self.show_done))
-        if remaining:
-            self.selected_id = remaining[min(index, len(remaining) - 1)]
-        else:
-            self.selected_id = None
-        self.message = f"Deleted: {_shorten(todo.text, 28)}"
-        self.message_error = False
-
-    def _move_selected(self) -> None:
+    def action_move(self) -> None:
         todo = self._selected_todo()
         if todo is None:
             return
-        target = self._pick_group(f'Move "{_shorten(todo.text, 20)}"', current=todo.group)
-        if target is None:
+        counts = {
+            group: (
+                sum(not item.done and item.group == group for item in self.store.todos),
+                sum(item.group == group for item in self.store.todos),
+            )
+            for group in self.store.groups
+        }
+        self.push_screen(
+            GroupPickerModal(
+                f'Move "{shorten(todo.text, 22)}"',
+                list(self.store.groups),
+                counts,
+                todo.group,
+            ),
+            callback=lambda choice: self._on_group_choice(todo.id, choice),
+        )
+
+    def _on_group_choice(self, todo_id: str, choice: str | object | None) -> None:
+        if choice is None:
             return
-        if target == todo.group:
-            self.message = f"Already in {target}."
-            self.message_error = False
+        if choice is NEW_GROUP_CHOICE:
+            self.push_screen(
+                TextPromptModal(
+                    "New group name",
+                    placeholder="e.g. Work, Home, Errands",
+                    limit=MAX_GROUP_LENGTH,
+                ),
+                callback=lambda name: self._on_new_group_for_move(todo_id, name),
+            )
             return
+        assert isinstance(choice, str)
+        self.run_worker(self._move_todo(todo_id, choice), exclusive=False)
+
+    def _on_new_group_for_move(self, todo_id: str, name: str | None) -> None:
+        if name:
+            self.run_worker(
+                self._create_group_and_move(todo_id, name), exclusive=False
+            )
+
+    async def _move_todo(self, todo_id: str, group: str) -> None:
+        todo = self.store.get(todo_id)
+        if todo is None:
+            return
+        if todo.group == group:
+            self._set_message(f"Already in {group}.")
+            return
+        old_ids = self._visible_ids()
         try:
-            moved = self.store.move(todo.id, target)
+            moved = self.store.move(todo.id, group)
         except (ValueError, StoreError) as exc:
             self._error(str(exc))
             return
+        self.selected_id = self._nearest_id(old_ids, todo_id, self._visible_ids())
+        await self._refresh_rows()
         if moved is not None:
-            self.message = f"Moved to {target}."
-            self.message_error = False
+            self._set_message(f"Moved to {group}.")
 
-    def _new_group(self) -> None:
-        name = self.prompt("New group name", limit=MAX_GROUP_LENGTH)
-        if not name:
+    async def _create_group_and_move(self, todo_id: str, name: str) -> None:
+        try:
+            group = self.store.add_group(name)
+            self.store.move(todo_id, group)
+        except (ValueError, StoreError) as exc:
+            self._error(str(exc))
             return
+        await self._rebuild_tabs()
+        await self._refresh_rows()
+        self._set_message(f"Moved to {group}.")
+
+    def action_new_group(self) -> None:
+        self.push_screen(
+            TextPromptModal(
+                "New group name",
+                placeholder="e.g. Work, Home, Errands",
+                limit=MAX_GROUP_LENGTH,
+            ),
+            callback=self._on_new_group_result,
+        )
+
+    def _on_new_group_result(self, name: str | None) -> None:
+        if name:
+            self.run_worker(self._create_group(name), exclusive=False)
+
+    async def _create_group(self, name: str) -> None:
         try:
             group = self.store.add_group(name)
         except (ValueError, StoreError) as exc:
             self._error(str(exc))
             return
-        self.view = group
-        self.active_group = group
-        self.selected_id = None
-        self.scroll = 0
-        self.message = f"Viewing {group}. Press n to add a todo."
-        self.message_error = False
+        await self._rebuild_tabs()
+        await self._set_view(group)
+        self._set_message(f"Viewing {group}. Press n to add a todo.")
 
-    def _error(self, message: str) -> None:
-        self.message = message
-        self.message_error = True
+    async def action_toggle_done(self) -> None:
+        await self._toggle_show_done()
 
-    # -- modal helpers -------------------------------------------------------
-
-    def prompt(
-        self,
-        label: str,
-        *,
-        initial: str = "",
-        limit: int = MAX_TEXT_LENGTH,
-    ) -> str | None:
-        text = initial
-        try:
-            curses.curs_set(1)
-        except curses.error:
-            pass
-        try:
-            while True:
-                self.draw()
-                try:
-                    height, width = self.stdscr.getmaxyx()
-                except curses.error:
-                    return None
-                if height < 2 or width < 12:
-                    return None
-                prefix = f"{label}: "
-                if _width(prefix) > width - 14:
-                    prefix = "> "
-                available = max(1, width - 2 - _width(prefix))
-                shown = text
-                while shown and _width(shown) > available:
-                    shown = shown[1:]
-                line = prefix + shown
-                self._put(height - 1, 0, " " * (width - 1), 0)
-                self._put(height - 1, 0, line, curses.A_BOLD)
-                try:
-                    self.stdscr.move(height - 1, min(width - 2, _width(line)))
-                    self.stdscr.refresh()
-                    key = self.stdscr.get_wch()
-                except curses.error:
-                    continue
-
-                if not isinstance(key, str):
-                    if key == curses.KEY_RESIZE:
-                        continue
-                    if key == curses.KEY_BACKSPACE:
-                        text = text[:-1]
-                    elif key == curses.KEY_ENTER:
-                        return text.strip() or None
-                    continue
-
-                if key in ("\n", "\r"):
-                    return text.strip() or None
-                if key in ("\x1b", "\x03"):
-                    return None
-                if key in ("\x7f", "\b"):
-                    text = text[:-1]
-                elif key == "\x15":  # Ctrl-U clears the line.
-                    text = ""
-                elif key.isprintable() and len(text) < limit:
-                    text += key
-        finally:
-            try:
-                curses.curs_set(0)
-            except curses.error:
-                pass
-
-    def _pick_group(self, title: str, current: str | None = None) -> str | None:
-        try:
-            height, width = self.stdscr.getmaxyx()
-        except curses.error:
-            return None
-        if height < 9 or width < 36:
-            self._error("Terminal too small for the group picker.")
-            return None
-
-        groups = list(self.store.groups)
-        items: list[str | object] = [*groups, _NEW_GROUP]
-        labels = [*groups, _NEW_GROUP_LABEL]
-        list_height = min(len(items), height - 7)
-        win_height = list_height + 4
-        win_width = min(
-            max(
-                36,
-                _width(title) + 6,
-                *(_width(label) + 8 for label in labels),
+    def action_theme(self) -> None:
+        current_theme = self.theme
+        current_transparent = self.transparent_background
+        self.push_screen(
+            ThemePickerModal(
+                THEME_CHOICES,
+                current_theme,
+                current_transparent,
             ),
-            width - 4,
+            callback=lambda result: self._on_theme_result(
+                result, current_theme, current_transparent
+            ),
         )
-        top = (height - win_height) // 2
-        left = (width - win_width) // 2
-        win = curses.newwin(win_height, win_width, top, left)
-        win.keypad(True)
-        selected = groups.index(current) if current in groups else 0
-        offset = max(0, selected - list_height + 1)
-        choice: str | object | None = None
 
+    def _apply_transparency(self) -> None:
+        enabled = self.transparent_background
+        # ``transparent`` is rendered as black by Textual. ANSI default (with
+        # native ANSI colors enabled) emits the terminal's own background.
+        self.ansi_color = True if enabled else None
+        self.set_class(enabled, "-transparent")
+        if self.main_screen is not None:
+            self.main_screen.set_class(enabled, "-transparent")
+        # App class changes do not trigger a stylesheet refresh on their own.
+        self.refresh_css(animate=False)
+
+    def _on_theme_result(
+        self,
+        result: ThemeSelection | None,
+        previous_theme: str,
+        previous_transparent: bool,
+    ) -> None:
+        if result is None:
+            self.theme = previous_theme
+            self.transparent_background = previous_transparent
+            self._apply_transparency()
+            return
+        choice = get_theme_choice(result.theme)
+        if choice is None:
+            self.theme = previous_theme
+            self.transparent_background = previous_transparent
+            self._apply_transparency()
+            self._error(f"Unknown theme: {result.theme}")
+            return
+        self.theme = result.theme
+        self.transparent_background = result.transparent
+        self._apply_transparency()
         try:
-            while True:
-                win.erase()
-                try:
-                    win.box()
-                except curses.error:
-                    pass
-                _win_put(win, 0, 2, f" {title} ", win_width - 4, curses.A_BOLD)
-                _win_put(
-                    win,
-                    win_height - 1,
-                    2,
-                    " Enter select   Esc cancel ",
-                    win_width - 4,
-                    curses.A_DIM,
-                )
+            self.store.set_appearance(result.theme, result.transparent)
+        except (ValueError, StoreError) as exc:
+            self.theme = (
+                self.store.theme if self.store.theme in THEME_IDS else previous_theme
+            )
+            self.transparent_background = self.store.transparent
+            self._apply_transparency()
+            self._error(str(exc))
+            return
+        if result.transparent != previous_transparent:
+            state = "enabled" if result.transparent else "disabled"
+            self._set_message(f"Transparent background {state}.")
+        elif result.transparent:
+            self._set_message(f"Color theme: {choice.label}, transparent background.")
+        else:
+            self._set_message(f"Color theme: {choice.label}.")
 
-                if selected < offset:
-                    offset = selected
-                elif selected >= offset + list_height:
-                    offset = selected - list_height + 1
+    async def _toggle_show_done(self) -> None:
+        old_ids = self._visible_ids()
+        self.show_done = not self.show_done
+        self.selected_id = self._nearest_id(
+            old_ids, self.selected_id, self._visible_ids()
+        )
+        await self._refresh_rows()
+        self._set_message(
+            "Showing completed todos." if self.show_done else "Hiding completed todos."
+        )
 
-                for line, index in enumerate(
-                    range(offset, min(len(items), offset + list_height))
-                ):
-                    label = labels[index]
-                    attr = (
-                        curses.A_REVERSE | curses.A_BOLD
-                        if index == selected
-                        else 0
-                    )
-                    inner = f" {label} "
-                    padding = max(0, win_width - 3 - _width(inner))
-                    _win_put(
-                        win,
-                        2 + line,
-                        1,
-                        inner + " " * padding,
-                        win_width - 3,
-                        attr,
-                    )
-                win.refresh()
+    # -- widget messages -----------------------------------------------------
 
-                try:
-                    key = win.get_wch()
-                except curses.error:
-                    continue
+    @on(TodoClicked)
+    async def _todo_clicked(self, event: TodoClicked) -> None:
+        self.selected_id = event.todo_id
+        self._apply_selection()
+        if event.toggle:
+            await self._toggle(event.todo_id)
 
-                if isinstance(key, str):
-                    if key in ("\n", "\r"):
-                        choice = items[selected]
-                        break
-                    if key in ("\x1b", "\x03"):
-                        break
-                    if key in ("j", "J"):
-                        selected = min(len(items) - 1, selected + 1)
-                    elif key in ("k", "K"):
-                        selected = max(0, selected - 1)
-                    elif key in ("n", "N"):
-                        choice = _NEW_GROUP
-                        break
-                else:
-                    if key == curses.KEY_RESIZE:
-                        break
-                    if key == curses.KEY_UP:
-                        selected = max(0, selected - 1)
-                    elif key == curses.KEY_DOWN:
-                        selected = min(len(items) - 1, selected + 1)
-                    elif key == curses.KEY_ENTER:
-                        choice = items[selected]
-                        break
-        finally:
-            del win
-            self.stdscr.touchwin()
+    @on(GroupClicked)
+    async def _group_clicked(self, event: GroupClicked) -> None:
+        if event.group in self.store.groups and event.group != self.view:
+            await self._set_view(event.group)
 
-        if choice is _NEW_GROUP:
-            name = self.prompt("New group name", limit=MAX_GROUP_LENGTH)
-            if not name:
-                return None
-            try:
-                group = self.store.add_group(name)
-            except (ValueError, StoreError) as exc:
-                self._error(str(exc))
-                return None
-            return group
-        if isinstance(choice, str):
-            return choice
-        return None
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "btn-new":
+            self.action_add()
+        elif button_id == "btn-toggle":
+            await self.action_toggle()
+        elif button_id == "btn-group":
+            self.action_move()
+        elif button_id == "btn-delete":
+            await self.action_delete()
+        elif button_id == "btn-hide":
+            await self.action_toggle_done()
+        elif button_id == "btn-theme":
+            self.action_theme()
+        elif button_id == "btn-quit":
+            self.exit()

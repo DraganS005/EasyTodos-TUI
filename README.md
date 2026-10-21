@@ -1,40 +1,80 @@
 # Todo TUI
 
-A small, dependency-free terminal todo list with groups. Built with Python's
-standard-library `curses` module.
+A small terminal todo list with groups, built with
+[Textual](https://textual.textualize.io/). It has mouse support, a responsive
+layout that keeps working in very small terminals, and automatic JSON
+persistence.
 
-```
- TODO  grouped todo list
- View [All]  Inbox  Work  Home
- ────────────────────────────────────────────
- Work  (1/3 done)
-   [ ] Write the report
-   [ ] Reply to email
-   [x] Book meeting room
+```text
+ TODO                                                      2 open, 1 done
+ All  Inbox  Home  Work
+ Inbox  (0/1 done)
+ [ ] Read a chapter
  Home  (0/2 done)
-   [ ] Buy milk
-   [ ] Water plants
- 2 open, 3 done
- n new  space toggle  d del  g group  G new  tab view  h hide done  q quit
+ [ ] Buy milk and eggs
+ [ ] Call the plumber
+ Work  (1/1 done)
+ [x] Finish the report
+ Viewing all groups
+   New     Check     Group     Delete     Hide done     Theme     Quit
+ n new  space check  d del  g group  G new  t theme  tab view  h hide  q quit
 ```
+
+## Install
+
+Requires Python 3.10+ and an interactive terminal. Textual is the only runtime
+dependency.
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python todo.py
+```
+
+Or install the project itself, which adds a `todo-tui` command:
+
+```sh
+.venv/bin/pip install -e .
+.venv/bin/todo-tui
+```
+
+Using a virtual environment avoids changes to the system Python. If Textual is
+missing, the app prints the install commands instead of a traceback.
 
 ## Run
 
-Requires Python 3.10+ and an interactive terminal. There is nothing to install.
-
 ```sh
-python3 todo.py
-# or
-python3 -m todo_tui
+.venv/bin/python todo.py
+# or, from an installed environment
+.venv/bin/python -m todo_tui
+.venv/bin/todo-tui
 ```
 
-Todos are saved automatically to `~/.local/share/todo-tui/todos.json`
-(or `$XDG_DATA_HOME/todo-tui/todos.json`). You can choose another file:
+Todos, the selected color theme, and the transparent-background setting are
+saved automatically to `~/.local/share/todo-tui/todos.json` (or
+`$XDG_DATA_HOME/todo-tui/todos.json`). Choose another file with `--file` or
+`TODO_TUI_FILE`:
 
 ```sh
-python3 todo.py --file ./my-todos.json
-# or set TODO_TUI_FILE=/path/to/todos.json
+.venv/bin/python todo.py --file ./my-todos.json
+TODO_TUI_FILE=/path/to/todos.json .venv/bin/python todo.py
 ```
+
+## Mouse
+
+| Interaction | Action |
+| --- | --- |
+| Click a todo | Select it |
+| Click the `[ ]` box | Check or reopen it |
+| Double-click a todo | Check or reopen it |
+| Click a group header | Switch to that group |
+| Click a view tab | Switch between All and each group |
+| Click a toolbar button | Add, check, group, delete, hide completed, choose a theme, or quit |
+| Click a group in the move dialog | Move the selected todo there |
+| Wheel / scrollbar | Scroll the list |
+
+The toolbar labels shorten automatically in narrow terminals. Tooltips on rows
+and buttons describe their actions.
 
 ## Keys
 
@@ -42,42 +82,102 @@ python3 todo.py --file ./my-todos.json
 | --- | --- |
 | `n` / `a` | Add a todo to the current group |
 | `space` / `enter` / `x` | Check off or reopen the selected todo |
-| `d` | Delete the selected todo immediately |
-| `g` | Move the selected todo to another group (or a new one) |
+| `d` / `Delete` | Delete the selected todo immediately |
+| `g` | Move the selected todo to another group (or a new group) |
 | `G` | Create a new group and switch to it |
 | `tab` / `shift+tab` | Cycle between All and each group |
+| `left` / `right`, `[` / `]` | Previous / next view |
 | `h` | Hide or show completed todos |
+| `t` | Change the color theme |
 | `j` / `k` / arrows | Move the selection |
 | `q` | Quit |
 
-## Groups and sorting
+In dialogs, `enter` saves or chooses, and `escape` cancels.
 
-The **All** view shows todos under group headers, and each group also gets a
-tab. Within a group, open todos come first (oldest first), followed by completed
-todos. Checking a todo off leaves it visible but moves it below the open items;
-press `h` if you would rather hide completed items completely. Group headers
-show `done/total` counts.
+## Color themes
 
-When adding a todo, the prompt shows which group it will go to: the group you
-are viewing, or in the All view the selected todo's group (falling back to the
-last group you used). To add to a brand-new group, press `G` first.
+Press `t`, or click **Theme** in the toolbar (hidden only at tiny sizes), to
+open the theme picker. Highlighting a theme previews it immediately; press
+`enter` or click a theme to apply it, or `escape` / **Cancel** to restore the
+previous one. The choice is saved in the todo JSON file and restored on the
+next launch.
 
-Creating a group, moving a todo, and adding a todo all update the JSON file
-atomically right away.
+The first item in the picker, **Transparent background**, lets the terminal's
+own background show through the list, tabs, status, help, and toolbar. Theme
+colors still apply to text, accents, buttons, and dialogs. This uses the
+terminal's default background, so terminal-level transparency, blur, or a
+background image also shows through. Reopen the picker and select the item
+again to turn it off. Pick a light or dark theme that matches your terminal for
+the best text contrast.
+
+There are 24 theme choices (plus the transparent-background toggle):
+
+- **Dark:** Textual Dark, Atom One Dark, Ayu Mirage, Catppuccin Frappe,
+  Catppuccin Macchiato, Catppuccin Mocha, Dracula, Everforest Dark, Flexoki,
+  GitHub Dark, Gruvbox Dark, Kanagawa, Monokai, Nord, Rose Pine,
+  Rose Pine Moon, Solarized Dark, Tokyo Night
+- **Light:** Textual Light, Atom One Light, Catppuccin Latte, GitHub Light,
+  Rose Pine Dawn, Solarized Light
+
+The **Theme** toolbar button is hidden at tiny sizes to keep the four essential
+actions, and the **Quit** button is omitted below 60 columns; `t` and `q` work
+at every size.
+
+## Small terminals
+
+The interface changes as the terminal shrinks:
+
+| Size | What changes |
+| --- | --- |
+| 80x20 and larger | Full header, tabs, status, toolbar, and key help |
+| Narrower than 80 or shorter than 20 | Key help is hidden and group spacing tightens |
+| Narrower than 60 | Quit button is hidden (`q` still works) |
+| Narrower than 50 or shorter than 11 | Header, status, and help are hidden; compact toolbar labels; Theme button hidden |
+| Shorter than 4 rows | Toolbar is hidden |
+| Shorter than 2 rows | Tabs are hidden |
+
+Long todo text is truncated with an ellipsis rather than wrapping and consuming
+more rows. At tiny sizes the toolbar keeps the four essential actions: add,
+check, group, and delete. Modal dialogs become full-width, remove decorative
+borders, and keep their input and buttons visible.
+
+## Groups and selection
+
+The **All** view shows todos under clickable group headers, and every group also
+has a tab. Open todos sort first (oldest first), followed by completed todos.
+Group headers show done/total counts, including completed todos that are
+currently hidden.
+
+Checking a todo off keeps it selected while it reorders, and the list scrolls to
+follow it. If the completed todo is hidden by **Hide done**, or it is moved out
+of the current view, the selection moves to the next visible row at the same
+position (falling back to the previous row at the end) instead of jumping to the
+top. Deleting a todo behaves the same way.
+
+When adding a todo, the dialog names the target group: the group you are
+viewing, or in the All view the selected todo's group (falling back to the last
+group used). Press `G` to create a new group first.
 
 ## Tests
 
 ```sh
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
+
+The test suite covers the model, grouping/order logic, and the Textual app
+(including mouse clicks, keyboard navigation after completion, groups, modals,
+and layouts down to 20x3).
 
 ## Layout
 
-```
-todo.py              # runnable entry point
-todo_tui/model.py    # Todo, TodoStore, validation, JSON persistence
-todo_tui/view.py     # grouping / ordering logic for the list
-todo_tui/ui.py       # curses interface
-todo_tui/cli.py      # argument parsing and startup
-tests/               # model, persistence, and view logic tests
+```text
+todo.py                 # runnable entry point
+todo_tui/model.py       # Todo, TodoStore, validation, JSON persistence
+todo_tui/view.py        # grouping and ordering for the list
+todo_tui/ui.py          # Textual app, actions, responsive chrome
+todo_tui/widgets.py     # rows, tabs, toolbar, dialogs
+todo_tui/themes.py      # 24 theme choices and custom Textual themes
+todo_tui/app.tcss       # Textual stylesheet and responsive tiers
+todo_tui/cli.py         # argument parsing and startup
+tests/                  # model, view, and Textual app tests
 ```

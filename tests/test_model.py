@@ -9,6 +9,7 @@ from unittest import mock
 
 from todo_tui.model import (
     DEFAULT_GROUP,
+    DEFAULT_THEME,
     MAX_GROUP_LENGTH,
     StoreError,
     TodoStore,
@@ -102,6 +103,78 @@ class GroupTests(StoreTestCase):
             encoding="utf-8",
         )
         self.assertEqual(self.reload().groups, ["Inbox", "Work"])
+
+
+class ThemeTests(StoreTestCase):
+    def test_default_theme_is_saved_and_reloaded(self) -> None:
+        self.store.add("One")
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(data["theme"], DEFAULT_THEME)
+        self.assertFalse(data["transparent"])
+        self.assertEqual(self.reload().theme, DEFAULT_THEME)
+        self.assertFalse(self.reload().transparent)
+
+    def test_set_theme_is_persisted(self) -> None:
+        self.store.set_theme("nord")
+        self.assertEqual(self.store.theme, "nord")
+        self.assertEqual(self.reload().theme, "nord")
+
+    def test_missing_theme_uses_default(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps({"version": 1, "groups": ["Inbox"], "todos": []}),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.reload().theme, DEFAULT_THEME)
+        self.assertFalse(self.reload().transparent)
+
+    def test_transparency_is_persisted(self) -> None:
+        self.store.set_appearance("nord", True)
+        self.assertEqual((self.store.theme, self.store.transparent), ("nord", True))
+        loaded = self.reload()
+        self.assertEqual((loaded.theme, loaded.transparent), ("nord", True))
+
+    def test_set_theme_preserves_transparency(self) -> None:
+        self.store.set_appearance("nord", True)
+        self.store.set_theme("dracula")
+        loaded = self.reload()
+        self.assertEqual((loaded.theme, loaded.transparent), ("dracula", True))
+
+    def test_invalid_transparency_is_rejected(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "theme": "textual-dark",
+                    "transparent": "yes",
+                    "groups": ["Inbox"],
+                    "todos": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaises(StoreError):
+            TodoStore(self.path)
+
+    def test_invalid_theme_is_rejected(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps(
+                {"version": 1, "theme": 42, "groups": ["Inbox"], "todos": []}
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaises(StoreError):
+            TodoStore(self.path)
+
+    def test_empty_theme_name_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.set_theme("   ")
+
+    def test_non_boolean_transparency_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.set_appearance("nord", "yes")  # type: ignore[arg-type]
 
 
 class ToggleAndDeleteTests(StoreTestCase):

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_GROUP = "Inbox"
+DEFAULT_THEME = "textual-dark"
 DATA_VERSION = 1
 MAX_TEXT_LENGTH = 500
 MAX_GROUP_LENGTH = 40
@@ -102,6 +103,8 @@ class TodoStore:
         self.path = Path(path) if path is not None else self.default_path()
         self.groups: list[str] = [DEFAULT_GROUP]
         self.todos: list[Todo] = []
+        self.theme: str = DEFAULT_THEME
+        self.transparent: bool = False
         self.load()
 
     @staticmethod
@@ -118,6 +121,8 @@ class TodoStore:
     def load(self) -> None:
         self.groups = [DEFAULT_GROUP]
         self.todos = []
+        self.theme = DEFAULT_THEME
+        self.transparent = False
 
         try:
             raw = self.path.read_text(encoding="utf-8")
@@ -143,6 +148,15 @@ class TodoStore:
                 f"{self.path} uses unsupported data version {version!r} "
                 f"(expected {DATA_VERSION})"
             )
+
+        theme = data.get("theme", DEFAULT_THEME)
+        if not isinstance(theme, str) or not theme.strip():
+            raise StoreError(f"{self.path}: 'theme' must be a non-empty string")
+        theme = theme.strip()
+
+        transparent = data.get("transparent", False)
+        if not isinstance(transparent, bool):
+            raise StoreError(f"{self.path}: 'transparent' must be true or false")
 
         raw_groups = data.get("groups", [])
         if not isinstance(raw_groups, list):
@@ -209,10 +223,14 @@ class TodoStore:
 
         self.groups = groups
         self.todos = todos
+        self.theme = theme
+        self.transparent = transparent
 
     def save(self) -> None:
         payload = {
             "version": DATA_VERSION,
+            "theme": self.theme,
+            "transparent": self.transparent,
             "groups": self.groups,
             "todos": [todo.to_dict() for todo in self.todos],
         }
@@ -276,6 +294,32 @@ class TodoStore:
         self.groups.append(clean)
         self.save()
         return clean
+
+    def set_appearance(self, theme: str, transparent: bool) -> tuple[str, bool]:
+        """Persist the selected theme and transparent-background setting."""
+        if not isinstance(theme, str) or not theme.strip():
+            raise ValueError("Theme name cannot be empty.")
+        if not isinstance(transparent, bool):
+            raise ValueError("Transparent background must be true or false.")
+        clean = theme.strip()
+        if clean == self.theme and transparent == self.transparent:
+            return self.theme, self.transparent
+        previous_theme = self.theme
+        previous_transparent = self.transparent
+        self.theme = clean
+        self.transparent = transparent
+        try:
+            self.save()
+        except StoreError:
+            self.theme = previous_theme
+            self.transparent = previous_transparent
+            raise
+        return self.theme, self.transparent
+
+    def set_theme(self, name: str) -> str:
+        """Persist the selected color theme name, preserving transparency."""
+        theme, _transparent = self.set_appearance(name, self.transparent)
+        return theme
 
     def toggle(self, todo_id: str) -> Todo | None:
         todo = self.get(todo_id)
