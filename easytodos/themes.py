@@ -45,6 +45,20 @@ class ThemeChoice:
 
 CUSTOM_THEMES: tuple[Theme, ...] = (
     Theme(
+        name="default",
+        primary="#5f6b7a",
+        secondary="#8794a5",
+        accent="#91a4bd",
+        warning="#d2b36c",
+        error="#cf7f7f",
+        success="#8fbc8f",
+        foreground="#d7dae0",
+        background="#181a1f",
+        surface="#1e2127",
+        panel="#272b33",
+        dark=True,
+    ),
+    Theme(
         name="everforest-dark",
         primary="#a7c080",
         secondary="#7fbbb3",
@@ -116,9 +130,10 @@ CUSTOM_THEMES: tuple[Theme, ...] = (
     ),
 )
 
-# Ordered for quick scanning in the theme picker: the default pair first, then
-# the rest alphabetically by label.
+# The app default first, then Textual's base themes, then the rest
+# alphabetically by label.
 _THEME_LABELS: tuple[tuple[str, str], ...] = (
+    ("default", "Default"),
     ("textual-dark", "Textual Dark"),
     ("textual-light", "Textual Light"),
     ("atom-one-dark", "Atom One Dark"),
@@ -159,7 +174,7 @@ THEME_CHOICES: tuple[ThemeChoice, ...] = tuple(
 THEME_IDS = frozenset(choice.id for choice in THEME_CHOICES)
 THEME_BY_ID = {choice.id: choice for choice in THEME_CHOICES}
 
-assert len(THEME_CHOICES) == 24
+assert len(THEME_CHOICES) == 25
 assert DEFAULT_THEME in THEME_IDS
 
 

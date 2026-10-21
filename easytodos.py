@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run the todo TUI: python3 todo.py"""
+"""Run easytodos: python3 easytodos.py"""
 
-from todo_tui.cli import main
+from easytodos.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

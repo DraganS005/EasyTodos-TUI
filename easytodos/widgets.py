@@ -14,6 +14,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, OptionList, Static, Tabs
 from textual.widgets.option_list import Option
 
+from . import APP_NAME
 from .model import MAX_TEXT_LENGTH, Todo
 from .themes import ThemeChoice, ThemeSelection
 from .view import Row
@@ -184,7 +185,7 @@ class ActionButton(Button):
 
 class HeaderBar(Horizontal):
     def compose(self) -> ComposeResult:
-        yield Static("TODO", id="app-title")
+        yield Static(APP_NAME, id="app-title")
         yield Static("", id="app-stats")
 
 

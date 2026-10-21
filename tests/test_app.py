@@ -9,10 +9,10 @@ from pathlib import Path
 
 from textual.widgets import Input, OptionList, Tab
 
-from todo_tui.model import TodoStore
-from todo_tui.themes import THEME_CHOICES
-from todo_tui.ui import TodoApp
-from todo_tui.widgets import (
+from easytodos.model import TodoStore
+from easytodos.themes import THEME_CHOICES
+from easytodos.ui import TodoApp
+from easytodos.widgets import (
     ActionButton,
     GroupPickerModal,
     MainScreen,
@@ -76,6 +76,11 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.selected_row().todo.id, first.id)
             self.assertEqual(
                 self.app.main_screen.query_one("#views").active, "view-all"
+            )
+            self.assertEqual(self.app.TITLE, "easytodos")
+            self.assertEqual(
+                str(self.app.main_screen.query_one("#app-title").render()),
+                "easytodos",
             )
             self.assertEqual(
                 str(self.app.main_screen.query_one("#app-stats").render()),
@@ -322,8 +327,9 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_theme_picker_preview_select_and_cancel(self) -> None:
         async with self.running_app() as pilot:
-            self.assertEqual(len(THEME_CHOICES), 24)
-            self.assertEqual(self.app.theme, "textual-dark")
+            self.assertEqual(len(THEME_CHOICES), 25)
+            self.assertEqual(THEME_CHOICES[0].id, "default")
+            self.assertEqual(self.app.theme, "default")
             for choice in THEME_CHOICES:
                 self.assertIn(choice.id, self.app.available_themes)
 
@@ -332,7 +338,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
                 lambda: isinstance(self.app.screen, ThemePickerModal), "theme modal"
             )
             options = self.app.screen.query_one("#theme-options", OptionList)
-            self.assertEqual(options.option_count, 25)  # 24 themes + transparent toggle
+            self.assertEqual(options.option_count, 26)  # 25 themes + transparent toggle
             nord_index = next(
                 index
                 for index, choice in enumerate(THEME_CHOICES)
@@ -533,7 +539,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(theme_dialog.region.width, 20)
             self.assertLessEqual(theme_dialog.region.height, 6)
             theme_options = self.app.screen.query_one("#theme-options", OptionList)
-            self.assertEqual(theme_options.option_count, 25)
+            self.assertEqual(theme_options.option_count, 26)
             self.assertIn("Term bg", str(theme_options.get_option_at_index(0).prompt))
 
 

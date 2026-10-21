@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import APP_NAME
+
+APP_DATA_FILE_ENV = "EASYTODOS_FILE"
+LEGACY_APP_NAME = "todo-tui"
+LEGACY_DATA_FILE_ENV = "TODO_TUI_FILE"
+
 DEFAULT_GROUP = "Inbox"
-DEFAULT_THEME = "textual-dark"
+DEFAULT_THEME = "default"
 DATA_VERSION = 1
 MAX_TEXT_LENGTH = 500
 MAX_GROUP_LENGTH = 40
@@ -100,21 +107,51 @@ class TodoStore:
     """A list of todos, grouped by name and persisted to a JSON file."""
 
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path) if path is not None else self.default_path()
+        explicit_path = path is not None
+        self.path = Path(path) if explicit_path else self.default_path()
         self.groups: list[str] = [DEFAULT_GROUP]
         self.todos: list[Todo] = []
         self.theme: str = DEFAULT_THEME
         self.transparent: bool = False
+        if not explicit_path and not self._has_path_override():
+            self._migrate_legacy_data()
         self.load()
 
     @staticmethod
+    def _has_path_override() -> bool:
+        return bool(
+            os.environ.get(APP_DATA_FILE_ENV)
+            or os.environ.get(LEGACY_DATA_FILE_ENV)
+        )
+
+    @staticmethod
     def default_path() -> Path:
-        override = os.environ.get("TODO_TUI_FILE")
+        override = os.environ.get(APP_DATA_FILE_ENV) or os.environ.get(
+            LEGACY_DATA_FILE_ENV
+        )
         if override:
             return Path(override).expanduser()
         base = os.environ.get("XDG_DATA_HOME")
         root = Path(base).expanduser() if base else Path.home() / ".local" / "share"
-        return root / "todo-tui" / "todos.json"
+        return root / APP_NAME / "todos.json"
+
+    @staticmethod
+    def legacy_default_path() -> Path:
+        base = os.environ.get("XDG_DATA_HOME")
+        root = Path(base).expanduser() if base else Path.home() / ".local" / "share"
+        return root / LEGACY_APP_NAME / "todos.json"
+
+    def _migrate_legacy_data(self) -> None:
+        """Copy the old todo-tui data file to the new easytodos location."""
+        legacy = self.legacy_default_path()
+        if legacy == self.path or self.path.exists() or not legacy.exists():
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, self.path)
+        except OSError:
+            # If the new location cannot be written, keep using the old file.
+            self.path = legacy
 
     # -- reading and writing -------------------------------------------------
 

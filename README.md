@@ -1,4 +1,4 @@
-# Todo TUI
+# easytodos
 
 A small terminal todo list with groups, built with
 [Textual](https://textual.textualize.io/). It has mouse support, a responsive
@@ -6,7 +6,7 @@ layout that keeps working in very small terminals, and automatic JSON
 persistence.
 
 ```text
- TODO                                                      2 open, 1 done
+ easytodos                                                      2 open, 1 done
  All  Inbox  Home  Work
  Inbox  (0/1 done)
  [ ] Read a chapter
@@ -28,14 +28,14 @@ dependency.
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python todo.py
+.venv/bin/python easytodos.py
 ```
 
-Or install the project itself, which adds a `todo-tui` command:
+Or install the project itself, which adds an `easytodos` command:
 
 ```sh
 .venv/bin/pip install -e .
-.venv/bin/todo-tui
+.venv/bin/easytodos
 ```
 
 Using a virtual environment avoids changes to the system Python. If Textual is
@@ -44,21 +44,24 @@ missing, the app prints the install commands instead of a traceback.
 ## Run
 
 ```sh
-.venv/bin/python todo.py
+.venv/bin/python easytodos.py
 # or, from an installed environment
-.venv/bin/python -m todo_tui
-.venv/bin/todo-tui
+.venv/bin/python -m easytodos
+.venv/bin/easytodos
 ```
 
 Todos, the selected color theme, and the transparent-background setting are
-saved automatically to `~/.local/share/todo-tui/todos.json` (or
-`$XDG_DATA_HOME/todo-tui/todos.json`). Choose another file with `--file` or
-`TODO_TUI_FILE`:
+saved automatically to `~/.local/share/easytodos/todos.json` (or
+`$XDG_DATA_HOME/easytodos/todos.json`). Choose another file with `--file` or
+`EASYTODOS_FILE`:
 
 ```sh
-.venv/bin/python todo.py --file ./my-todos.json
-TODO_TUI_FILE=/path/to/todos.json .venv/bin/python todo.py
+.venv/bin/python easytodos.py --file ./my-todos.json
+EASYTODOS_FILE=/path/to/todos.json .venv/bin/python easytodos.py
 ```
+
+Data from the old `~/.local/share/todo-tui/todos.json` location is copied to
+`~/.local/share/easytodos/todos.json` on first launch.
 
 ## Mouse
 
@@ -110,9 +113,12 @@ background image also shows through. Reopen the picker and select the item
 again to turn it off. Pick a light or dark theme that matches your terminal for
 the best text contrast.
 
-There are 24 theme choices (plus the transparent-background toggle):
+There are 25 theme choices (plus the transparent-background toggle):
 
-- **Dark:** Textual Dark, Atom One Dark, Ayu Mirage, Catppuccin Frappe,
+**Default** is a neutral dark theme designed to sit comfortably beside most
+terminal color schemes.
+
+- **Dark:** Default, Textual Dark, Atom One Dark, Ayu Mirage, Catppuccin Frappe,
   Catppuccin Macchiato, Catppuccin Mocha, Dracula, Everforest Dark, Flexoki,
   GitHub Dark, Gruvbox Dark, Kanagawa, Monokai, Nord, Rose Pine,
   Rose Pine Moon, Solarized Dark, Tokyo Night
@@ -171,13 +177,13 @@ and layouts down to 20x3).
 ## Layout
 
 ```text
-todo.py                 # runnable entry point
-todo_tui/model.py       # Todo, TodoStore, validation, JSON persistence
-todo_tui/view.py        # grouping and ordering for the list
-todo_tui/ui.py          # Textual app, actions, responsive chrome
-todo_tui/widgets.py     # rows, tabs, toolbar, dialogs
-todo_tui/themes.py      # 24 theme choices and custom Textual themes
-todo_tui/app.tcss       # Textual stylesheet and responsive tiers
-todo_tui/cli.py         # argument parsing and startup
-tests/                  # model, view, and Textual app tests
+easytodos.py             # runnable entry point
+easytodos/model.py       # Todo, TodoStore, validation, JSON persistence
+easytodos/view.py        # grouping and ordering for the list
+easytodos/ui.py          # Textual app, actions, responsive chrome
+easytodos/widgets.py     # rows, tabs, toolbar, dialogs
+easytodos/themes.py      # 25 theme choices and custom Textual themes
+easytodos/app.tcss       # Textual stylesheet and responsive tiers
+easytodos/cli.py         # argument parsing and startup
+tests/                   # model, view, and Textual app tests
 ```

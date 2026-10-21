@@ -8,6 +8,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, Static, Tab, Tabs
 
+from . import APP_NAME
 from .model import (
     DEFAULT_GROUP,
     DEFAULT_THEME,
@@ -44,7 +45,7 @@ class TodoApp(App[None]):
     """A compact, mouse-friendly terminal todo list."""
 
     CSS_PATH = "app.tcss"
-    TITLE = "TODO"
+    TITLE = APP_NAME
 
     BINDINGS = [
         Binding("n", "add", "New"),

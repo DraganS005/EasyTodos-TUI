@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from todo_tui.model import TodoStore
-from todo_tui.view import build_rows, sort_todos, visible_todo_ids
+from easytodos.model import TodoStore
+from easytodos.view import build_rows, sort_todos, visible_todo_ids
 
 
 class ViewTestCase(unittest.TestCase):

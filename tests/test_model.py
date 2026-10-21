@@ -7,9 +7,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from todo_tui.model import (
+from easytodos.model import (
+    APP_DATA_FILE_ENV,
     DEFAULT_GROUP,
     DEFAULT_THEME,
+    LEGACY_DATA_FILE_ENV,
     MAX_GROUP_LENGTH,
     StoreError,
     TodoStore,
@@ -328,11 +330,34 @@ class LoadTests(StoreTestCase):
 class DefaultPathTests(unittest.TestCase):
     def test_env_file_override(self) -> None:
         with mock.patch.dict(
-            os.environ, {"TODO_TUI_FILE": "~/todos.json"}, clear=True
+            os.environ, {APP_DATA_FILE_ENV: "~/todos.json"}, clear=True
         ):
             self.assertEqual(
                 TodoStore.default_path(),
                 Path.home() / "todos.json",
+            )
+
+    def test_legacy_env_file_override(self) -> None:
+        with mock.patch.dict(
+            os.environ, {LEGACY_DATA_FILE_ENV: "~/old-todos.json"}, clear=True
+        ):
+            self.assertEqual(
+                TodoStore.default_path(),
+                Path.home() / "old-todos.json",
+            )
+
+    def test_new_env_file_takes_precedence(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                APP_DATA_FILE_ENV: "~/new-todos.json",
+                LEGACY_DATA_FILE_ENV: "~/old-todos.json",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                TodoStore.default_path(),
+                Path.home() / "new-todos.json",
             )
 
     def test_xdg_data_home(self) -> None:
@@ -341,8 +366,26 @@ class DefaultPathTests(unittest.TestCase):
         ):
             self.assertEqual(
                 TodoStore.default_path(),
-                Path("/tmp/custom-data/todo-tui/todos.json"),
+                Path("/tmp/custom-data/easytodos/todos.json"),
             )
+
+    def test_legacy_data_is_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.dict(
+                os.environ, {"XDG_DATA_HOME": temp}, clear=True
+            ):
+                legacy_path = Path(temp) / "todo-tui" / "todos.json"
+                old_store = TodoStore(legacy_path)
+                old_store.add("from the old app")
+
+                store = TodoStore()
+
+                new_path = Path(temp) / "easytodos" / "todos.json"
+                self.assertEqual(store.path, new_path)
+                self.assertTrue(new_path.exists())
+                self.assertEqual(
+                    [todo.text for todo in store.todos], ["from the old app"]
+                )
 
 
 if __name__ == "__main__":

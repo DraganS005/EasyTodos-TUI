@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "todo-tui"
-version = "2.2.0"
-description = "A small, mouse-friendly terminal todo list with groups."
+name = "easytodos-tui"
+version = "2.3.0"
+description = "easytodos: a small, mouse-friendly terminal todo list with groups."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,10 +13,10 @@ dependencies = [
 ]
 
 [project.scripts]
-todo-tui = "todo_tui.cli:main"
+easytodos = "easytodos.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["todo_tui*"]
+include = ["easytodos*"]
 
 [tool.setuptools.package-data]
-todo_tui = ["app.tcss"]
+easytodos = ["app.tcss"]

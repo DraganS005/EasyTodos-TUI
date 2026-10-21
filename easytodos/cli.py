@@ -7,17 +7,18 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from . import __version__
-from .model import StoreError, TodoStore
+from . import APP_NAME, __version__
+from .model import APP_DATA_FILE_ENV, StoreError, TodoStore
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="todo-tui",
+        prog=APP_NAME,
         description="A small terminal todo list with groups, persisted to JSON.",
         epilog=(
-            "Data file: $TODO_TUI_FILE, or $XDG_DATA_HOME/todo-tui/todos.json "
-            "(defaults to ~/.local/share/todo-tui/todos.json)."
+            f"Data file: ${APP_DATA_FILE_ENV}, or "
+            f"$XDG_DATA_HOME/{APP_NAME}/todos.json "
+            f"(defaults to ~/.local/share/{APP_NAME}/todos.json)."
         ),
     )
     parser.add_argument(
@@ -39,7 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print(
-            "todo-tui: needs an interactive terminal "
+            f"{APP_NAME}: needs an interactive terminal "
             "(stdin and stdout must be a TTY).",
             file=sys.stderr,
         )
@@ -49,19 +50,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         store = TodoStore(path)
     except StoreError as exc:
-        print(f"todo-tui: {exc}", file=sys.stderr)
+        print(f"{APP_NAME}: {exc}", file=sys.stderr)
         return 1
 
     try:
         from textual.app import App  # noqa: F401
     except ModuleNotFoundError:
         print(
-            "todo-tui: Textual is not installed.\n"
+            f"{APP_NAME}: Textual is not installed.\n"
             "Install the dependencies with:\n"
             "  python3 -m venv .venv\n"
             "  .venv/bin/pip install -r requirements.txt\n"
             "then run:\n"
-            "  .venv/bin/python todo.py",
+            "  .venv/bin/python easytodos.py",
             file=sys.stderr,
         )
         return 1
