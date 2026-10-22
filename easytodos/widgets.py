@@ -21,6 +21,49 @@ from .view import Row
 
 NEW_GROUP_CHOICE = object()
 
+HELP_SECTIONS = (
+    (
+        "Todos",
+        (
+            (("n", "a"), "Add a todo in the current group"),
+            (("space", "enter", "x"), "Check or reopen the selected todo"),
+            (("d", "Delete"), "Delete the selected todo"),
+            (("j", "down"), "Move selection down"),
+            (("k", "up"), "Move selection up"),
+        ),
+    ),
+    (
+        "Groups & views",
+        (
+            (("g",), "Move selected todo to another group"),
+            (("G",), "Create a new group"),
+            (("left", "right", "[", "]"), "Previous or next view"),
+            (("tab", "shift+tab"), "Cycle through views"),
+        ),
+    ),
+    (
+        "Display",
+        (
+            (("h",), "Hide or show completed todos"),
+            (("t",), "Change theme and transparency"),
+        ),
+    ),
+    (
+        "App",
+        (
+            (("?", "F1"), "Open this help window"),
+            (("q",), "Quit the app"),
+        ),
+    ),
+    (
+        "Dialogs",
+        (
+            (("enter",), "Save or confirm"),
+            (("escape",), "Cancel or close"),
+        ),
+    ),
+)
+
 
 def shorten(text: str, limit: int = 28) -> str:
     text = " ".join(text.split())
@@ -213,11 +256,25 @@ class ActionBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield ActionButton("New", id="btn-new", tooltip="Add a todo (n)")
         yield ActionButton("Check", id="btn-toggle", tooltip="Check off (space)")
-        yield ActionButton("Group", id="btn-group", tooltip="Move to a group (g)")
+        yield ActionButton(
+            "Group",
+            id="btn-group",
+            tooltip="Move to a group (g) | create a group (G)",
+        )
         yield ActionButton("Delete", id="btn-delete", tooltip="Delete (d)")
-        yield ActionButton("Hide done", id="btn-hide", tooltip="Hide completed (h)")
+        yield ActionButton(
+            "Hide done",
+            id="btn-hide",
+            tooltip="Hide completed (h)",
+        )
         yield ActionButton("Theme", id="btn-theme", tooltip="Change color theme (t)")
         yield ActionButton("Quit", id="btn-quit", tooltip="Quit (q)")
+        yield Static("", id="actions-spacer", markup=False)
+        yield ActionButton(
+            "Help",
+            id="btn-help",
+            tooltip="Show all shortcuts (?)",
+        )
 
 
 class MainScreen(ResponsiveScreenMixin, Screen):
@@ -227,6 +284,55 @@ class MainScreen(ResponsiveScreenMixin, Screen):
         Binding("tab", "app.next_view", "Next view", show=False),
         Binding("shift+tab", "app.previous_view", "Previous view", show=False),
     ]
+
+
+class HelpModal(ResponsiveScreenMixin, ModalScreen[None]):
+    """Scrollable reference for every keyboard shortcut."""
+
+    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog help-dialog"):
+            yield Static("Keyboard shortcuts", classes="dialog-title", markup=False)
+            yield Static(
+                "Scroll with the arrow keys or mouse wheel. Escape closes.",
+                classes="help-intro",
+                markup=False,
+            )
+            with VerticalScroll(id="help-list"):
+                for section, rows in HELP_SECTIONS:
+                    yield Static(section, classes="help-section", markup=False)
+                    for keys, description in rows:
+                        with Horizontal(classes="help-row"):
+                            yield Static(
+                                " / ".join(keys),
+                                classes="help-key",
+                                markup=False,
+                            )
+                            yield Static(
+                                description,
+                                classes="help-desc",
+                                markup=False,
+                            )
+                yield Static(
+                    "Mouse: click to select, double-click to check, "
+                    "and use the wheel to scroll.",
+                    classes="help-note",
+                    markup=False,
+                )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Close", id="help-close", variant="primary")
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one("#help-list", VerticalScroll).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "help-close":
+            self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class TextPromptModal(ResponsiveScreenMixin, ModalScreen[str | None]):

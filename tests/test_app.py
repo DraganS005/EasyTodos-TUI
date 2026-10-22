@@ -7,14 +7,17 @@ import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from textual.containers import VerticalScroll
 from textual.widgets import Input, OptionList, Tab
 
 from easytodos.model import TodoStore
 from easytodos.themes import THEME_CHOICES
 from easytodos.ui import TodoApp
 from easytodos.widgets import (
+    HELP_SECTIONS,
     ActionButton,
     GroupPickerModal,
+    HelpModal,
     MainScreen,
     TextPromptModal,
     ThemePickerModal,
@@ -87,6 +90,76 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
                 "2 open, 1 done",
             )
             self.assertIn(third.id, self.app._visible_ids())
+
+    async def test_footer_shortcuts_are_in_the_action_bar(self) -> None:
+        async with self.running_app(size=(120, 24)):
+            screen = self.app.main_screen
+            self.assertEqual(len(screen.query("#help")), 0)
+            self.assertEqual(len(screen.query("#shortcuts")), 0)
+            labels = {
+                button.id: str(button.label) for button in screen.query(ActionButton)
+            }
+            self.assertEqual(labels["btn-new"], "n New")
+            self.assertEqual(labels["btn-toggle"], "space Check")
+            self.assertEqual(labels["btn-delete"], "d Delete")
+            self.assertEqual(labels["btn-help"], "? Help")
+            for button in screen.query(ActionButton):
+                self.assertLessEqual(button.region.right, screen.size.width)
+
+    async def test_help_window_lists_every_shortcut_and_scrolls(self) -> None:
+        async with self.running_app(size=(80, 20)) as pilot:
+            await pilot.click("#btn-help")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, HelpModal), "help modal"
+            )
+
+            help_list = self.app.screen.query_one("#help-list", VerticalScroll)
+            self.assertTrue(help_list.display)
+            self.assertTrue(help_list.can_focus)
+            self.assertEqual(self.app.focused, help_list)
+            self.assertGreater(help_list.max_scroll_y, 0)
+
+            rendered_keys = "  ".join(
+                str(widget.render()) for widget in self.app.screen.query(".help-key")
+            )
+            help_keys = {
+                key
+                for _, rows in HELP_SECTIONS
+                for keys, _ in rows
+                for key in keys
+            }
+            for _, rows in HELP_SECTIONS:
+                for keys, _ in rows:
+                    self.assertIn(" / ".join(keys), rendered_keys)
+            for binding in (
+                *TodoApp.BINDINGS,
+                *MainScreen.BINDINGS,
+                *HelpModal.BINDINGS,
+            ):
+                key = {
+                    "question_mark": "?",
+                    "delete": "Delete",
+                    "f1": "F1",
+                }.get(binding.key, binding.key)
+                self.assertIn(key, help_keys)
+
+            await pilot.press("pagedown")
+            await pilot.pause()
+            self.assertGreater(help_list.scroll_y, 0)
+
+            await pilot.click("#help-close")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main after help"
+            )
+
+            await pilot.press("question_mark")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, HelpModal), "help modal by key"
+            )
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main after escape"
+            )
 
     async def test_add_from_keyboard_and_persist(self) -> None:
         async with self.running_app() as pilot:
@@ -485,7 +558,6 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("-tiny", self.app.screen.classes)
             self.assertFalse(self.app.main_screen.query_one("#app-header").display)
             self.assertFalse(self.app.main_screen.query_one("#status").display)
-            self.assertFalse(self.app.main_screen.query_one("#help").display)
             self.assertGreaterEqual(
                 self.app.main_screen.query_one("#todo-list").size.height, 2
             )
@@ -496,6 +568,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(labels["btn-new"], "+")
             self.assertEqual(labels["btn-toggle"], "ok")
+            self.assertEqual(labels["btn-help"], "?")
             self.assertNotIn("btn-hide", labels)
             self.assertNotIn("btn-theme", labels)
 
@@ -541,6 +614,29 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             theme_options = self.app.screen.query_one("#theme-options", OptionList)
             self.assertEqual(theme_options.option_count, 26)
             self.assertIn("Term bg", str(theme_options.get_option_at_index(0).prompt))
+
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after tiny theme",
+            )
+            await pilot.press("f1")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, HelpModal), "tiny help modal"
+            )
+            help_dialog = self.app.screen.query_one(".help-dialog")
+            self.assertLessEqual(help_dialog.region.width, 20)
+            self.assertLessEqual(help_dialog.region.height, 6)
+            help_list = self.app.screen.query_one("#help-list", VerticalScroll)
+            self.assertGreater(help_list.max_scroll_y, 0)
+            await pilot.press("pagedown")
+            await pilot.pause()
+            self.assertGreater(help_list.scroll_y, 0)
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after tiny help",
+            )
 
 
 if __name__ == "__main__":

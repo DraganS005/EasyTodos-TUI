@@ -167,26 +167,23 @@ Screen {
     color: auto 90%;
 }
 
+#actions #actions-spacer {
+    width: 1fr;
+    height: 1;
+    background: transparent;
+}
+
+#actions #btn-help {
+    margin-right: 0;
+}
+
 #actions Button:disabled {
     background: $panel;
     color: $text-muted;
     opacity: 40%;
 }
 
-#help {
-    height: 1;
-    padding: 0 1;
-    color: $text-muted;
-    background: $surface;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
 /* -- responsive tiers ----------------------------------------------------- */
-
-.-compact #help {
-    display: none;
-}
 
 .-narrow #btn-quit {
     display: none;
@@ -202,8 +199,7 @@ Screen {
 }
 
 .-tiny #app-header,
-.-tiny #status,
-.-tiny #help {
+.-tiny #status {
     display: none;
 }
 
@@ -223,9 +219,24 @@ Screen {
     scrollbar-size-vertical: 0;
 }
 
+.-tiny #actions {
+    padding: 0;
+}
+
+.-tiny #actions-spacer {
+    display: none;
+}
+
 .-tiny #actions Button {
     padding: 0;
     margin: 0 1 0 0;
+}
+
+.-tiny #btn-help {
+    width: 1;
+    min-width: 1;
+    padding: 0;
+    margin-right: 0;
 }
 
 .-micro #actions {
@@ -248,7 +259,6 @@ Screen.-transparent {
 
 Screen.-transparent #views,
 Screen.-transparent #status,
-Screen.-transparent #help,
 Screen.-transparent #actions,
 Screen.-transparent .group-header {
     background: ansi_default;
@@ -389,4 +399,105 @@ ModalScreen {
 .-tiny #theme-options {
     height: 1fr;
     max-height: 100%;
+}
+
+/* -- help window ---------------------------------------------------------- */
+
+.help-dialog {
+    width: 74;
+    max-width: 94%;
+    height: 80%;
+    max-height: 32;
+}
+
+.help-intro {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#help-list {
+    width: 100%;
+    height: 1fr;
+    padding: 0;
+    border: none;
+    background: transparent;
+    scrollbar-size-vertical: 1;
+}
+
+.help-section {
+    width: 100%;
+    height: 1;
+    margin-top: 1;
+    color: $accent;
+    text-style: bold;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.help-row {
+    width: 100%;
+    height: 1;
+}
+
+.help-key {
+    width: 22;
+    height: 1;
+    padding: 0 1;
+    background: $primary-darken-2;
+    color: auto 90%;
+    text-style: bold;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.help-desc {
+    width: 1fr;
+    height: 1;
+    padding: 0 0 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.help-note {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: italic;
+    text-wrap: wrap;
+}
+
+.-compact .help-row {
+    layout: vertical;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.-compact .help-key,
+.-compact .help-desc {
+    width: 100%;
+}
+
+.-compact .help-desc {
+    height: auto;
+    padding: 0;
+    text-wrap: wrap;
+}
+
+.-compact .help-intro {
+    height: auto;
+    text-wrap: wrap;
+}
+
+.-tiny .help-dialog {
+    height: 100%;
+    max-height: 100%;
+}
+
+.-tiny .help-intro {
+    display: none;
 }

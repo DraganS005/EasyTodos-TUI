@@ -33,6 +33,7 @@ from .widgets import (
     GroupClicked,
     GroupPickerModal,
     HeaderBar,
+    HelpModal,
     MainScreen,
     TextPromptModal,
     ThemePickerModal,
@@ -81,6 +82,8 @@ class TodoApp(App[None]):
         Binding("right", "next_view", "Next view", show=False),
         Binding("[", "previous_view", "Previous view", show=False),
         Binding("]", "next_view", "Next view", show=False),
+        Binding("question_mark", "help", "Help"),
+        Binding("f1", "help", "Help", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -138,7 +141,6 @@ class TodoApp(App[None]):
         yield TodoList(rows, self.selected_id, self._empty_message())
         yield Static("", id="status", markup=False)
         yield ActionBar(id="actions")
-        yield Static("", id="help", markup=False)
 
     _MAIN_ACTIONS = frozenset(
         {
@@ -153,6 +155,7 @@ class TodoApp(App[None]):
             "cursor_up",
             "previous_view",
             "next_view",
+            "help",
             "quit",
         }
     )
@@ -287,15 +290,13 @@ class TodoApp(App[None]):
             screen.query_one("#status", Static).remove_class("-error")
         screen.query_one("#status", Static).update(status)
 
-        screen.query_one("#help", Static).update(
-            self._help_text(width, compact, tiny)
-        )
-
         has_selection = self._selected_todo() is not None
         for button_id in ("btn-toggle", "btn-group", "btn-delete"):
             screen.query_one(f"#{button_id}", ActionButton).disabled = not has_selection
 
         hide_label = "Hide done" if self.show_done else "Show done"
+        hide_short = "Hide" if self.show_done else "Show"
+        help_label = "? Help" if width >= 102 else "?"
         if tiny:
             labels = {
                 "btn-new": "+",
@@ -305,6 +306,7 @@ class TodoApp(App[None]):
                 "btn-hide": "hide",
                 "btn-theme": "t",
                 "btn-quit": "quit",
+                "btn-help": help_label,
             }
         elif compact:
             labels = {
@@ -312,37 +314,49 @@ class TodoApp(App[None]):
                 "btn-toggle": "Check",
                 "btn-group": "Group",
                 "btn-delete": "Del",
-                "btn-hide": "Hide" if self.show_done else "Show",
+                "btn-hide": hide_short,
                 "btn-theme": "Theme",
                 "btn-quit": "Quit",
+                "btn-help": help_label,
+            }
+        elif width < 92:
+            labels = {
+                "btn-new": "n New",
+                "btn-toggle": "sp Chk",
+                "btn-group": "g Grp",
+                "btn-delete": "d Del",
+                "btn-hide": f"h {hide_short}",
+                "btn-theme": "t Thm",
+                "btn-quit": "q Quit",
+                "btn-help": help_label,
+            }
+        elif width < 97:
+            labels = {
+                "btn-new": "n New",
+                "btn-toggle": "sp Check",
+                "btn-group": "g Group",
+                "btn-delete": "d Del",
+                "btn-hide": f"h {hide_short}",
+                "btn-theme": "t Theme",
+                "btn-quit": "q Quit",
+                "btn-help": help_label,
             }
         else:
             labels = {
-                "btn-new": "New",
-                "btn-toggle": "Check",
-                "btn-group": "Group",
-                "btn-delete": "Delete",
-                "btn-hide": hide_label,
-                "btn-theme": "Theme",
-                "btn-quit": "Quit",
+                "btn-new": "n New",
+                "btn-toggle": "space Check",
+                "btn-group": "g Group",
+                "btn-delete": "d Delete",
+                "btn-hide": f"h {hide_label}",
+                "btn-theme": "t Theme",
+                "btn-quit": "q Quit",
+                "btn-help": help_label,
             }
         for button_id, label in labels.items():
-            screen.query_one(f"#{button_id}", ActionButton).label = label
-
-    def _help_text(self, width: int, compact: bool, tiny: bool) -> str:
-        if tiny or compact:
-            return ""
-        hide = "hide done" if self.show_done else "show done"
-        if width >= 100:
-            return (
-                "n new   space check   d delete   g group   G new group   "
-                f"t theme   tab view   h {hide}   q quit"
-            )
-        short_hide = "hide" if self.show_done else "show"
-        return (
-            "n new  space check  d del  g group  G new  t theme  "
-            f"tab view  h {short_hide}  q quit"
-        )
+            button = screen.query_one(f"#{button_id}", ActionButton)
+            if str(button.label) != label:
+                button.label = label
+                button.refresh(layout=True)
 
     # -- tabs ----------------------------------------------------------------
 
@@ -613,6 +627,9 @@ class TodoApp(App[None]):
     async def action_toggle_done(self) -> None:
         await self._toggle_show_done()
 
+    def action_help(self) -> None:
+        self.push_screen(HelpModal())
+
     def action_theme(self) -> None:
         current_theme = self.theme
         current_transparent = self.transparent_background
@@ -716,5 +733,7 @@ class TodoApp(App[None]):
             await self.action_toggle_done()
         elif button_id == "btn-theme":
             self.action_theme()
+        elif button_id == "btn-help":
+            self.action_help()
         elif button_id == "btn-quit":
             self.exit()

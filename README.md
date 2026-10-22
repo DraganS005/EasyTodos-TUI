@@ -21,8 +21,7 @@ sync service, no network.
  Work  (1/1 done)
  [x] Finish the report
  Viewing all groups
-   New     Check     Group     Delete     Hide done     Theme     Quit
- n new  space check  d del  g group  G new  t theme  tab view  h hide  q quit
+ n New   space Check   g Group   d Delete   h Hide done   t Theme   q Quit   ? Help
 ```
 
 ## Install
@@ -92,6 +91,10 @@ Use `tab` or the left/right arrows to switch between **All** and each group.
 Clicking works too: click a row to select it, click its checkbox to check it
 off, click a group header or tab to switch views, or use the toolbar buttons.
 
+The shortcut keys are shown on the colored footer. Click **Help** (or press
+`?` / `F1`) to open a scrollable window listing every shortcut with a short
+explanation.
+
 ### Keyboard shortcuts
 
 | Key | Action |
@@ -106,6 +109,7 @@ off, click a group header or tab to switch views, or use the toolbar buttons.
 | `tab` / `shift+tab` | Cycle through views |
 | `h` | Hide or show completed todos |
 | `t` | Open the theme picker |
+| `?` / `F1` | Open the shortcut help window |
 | `q` | Quit |
 
 In dialogs, `enter` saves or confirms and `escape` cancels.
@@ -140,10 +144,10 @@ terminal's own background show through.
 
 ## Small terminals
 
-The interface adapts to the available space. In narrow or short terminals, the
-key help and non-essential toolbar buttons disappear first, labels get shorter,
-and the todo list keeps the full width. Keyboard shortcuts continue to work even
-when their buttons are hidden.
+The interface adapts to the available space. In narrow or short terminals,
+non-essential toolbar buttons disappear first, labels get shorter, and the todo
+list keeps the full width. The **Help** button stays available; keyboard
+shortcuts continue to work even when their buttons are hidden.
 
 ## Development
 
