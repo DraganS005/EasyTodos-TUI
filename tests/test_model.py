@@ -12,6 +12,7 @@ from easytodos.model import (
     DEFAULT_GROUP,
     DEFAULT_THEME,
     LEGACY_DATA_FILE_ENV,
+    MAX_DESCRIPTION_LENGTH,
     MAX_GROUP_LENGTH,
     StoreError,
     TodoStore,
@@ -68,6 +69,54 @@ class AddTests(StoreTestCase):
         self.assertEqual(data["version"], 1)
         self.assertEqual(len(data["todos"]), 2)
 
+    def test_description_is_optional_and_persisted(self) -> None:
+        todo = self.store.add(
+            "Plan trip",
+            "Travel",
+            description="Book train tickets\nPack bags",
+        )
+        self.assertEqual(todo.description, "Book train tickets\nPack bags")
+        loaded = self.reload().todos[0]
+        self.assertEqual(loaded.description, "Book train tickets\nPack bags")
+
+    def test_description_is_trimmed_and_limited(self) -> None:
+        todo = self.store.add("One", description="  some details  ")
+        self.assertEqual(todo.description, "some details")
+        self.assertEqual(self.store.add("Two").description, "")
+        with self.assertRaises(ValueError):
+            self.store.add(
+                "Too much",
+                description="x" * (MAX_DESCRIPTION_LENGTH + 1),
+            )
+
+
+class UpdateTests(StoreTestCase):
+    def test_update_changes_text_and_description(self) -> None:
+        todo = self.store.add("Old title")
+        updated = self.store.update(todo.id, " New title ", "  more detail  ")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.text, "New title")
+        self.assertEqual(updated.description, "more detail")
+        loaded = self.reload().todos[0]
+        self.assertEqual(loaded.text, "New title")
+        self.assertEqual(loaded.description, "more detail")
+
+    def test_update_can_clear_a_description(self) -> None:
+        todo = self.store.add("Title", description="Details")
+        updated = self.store.update(todo.id, "Title", "")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.description, "")
+        self.assertEqual(self.reload().todos[0].description, "")
+
+    def test_update_missing_todo_is_a_noop(self) -> None:
+        self.assertIsNone(self.store.update("missing", "Title", "Details"))
+
+    def test_update_rejects_empty_text(self) -> None:
+        todo = self.store.add("Title")
+        with self.assertRaises(ValueError):
+            self.store.update(todo.id, "   ", "Details")
+        self.assertEqual(self.store.get(todo.id).text, "Title")
+
 
 class GroupTests(StoreTestCase):
     def test_group_names_are_normalized_and_deduplicated(self) -> None:
@@ -105,6 +154,34 @@ class GroupTests(StoreTestCase):
             encoding="utf-8",
         )
         self.assertEqual(self.reload().groups, ["Inbox", "Work"])
+
+    def test_delete_empty_group(self) -> None:
+        self.store.add_group("Old")
+        result = self.store.delete_group("old")
+        self.assertEqual(result, ("Old", 0))
+        self.assertEqual(self.store.groups, [DEFAULT_GROUP])
+        self.assertEqual(self.reload().groups, [DEFAULT_GROUP])
+
+    def test_delete_group_moves_todos_to_inbox(self) -> None:
+        done = self.store.add("Done item", "Old")
+        open_todo = self.store.add("Open item", "Old")
+        self.store.toggle(done.id)
+        result = self.store.delete_group("Old")
+        self.assertEqual(result, ("Old", 2))
+        self.assertNotIn("Old", self.store.groups)
+        self.assertEqual(done.group, DEFAULT_GROUP)
+        self.assertEqual(open_todo.group, DEFAULT_GROUP)
+        loaded = self.reload()
+        self.assertEqual([todo.group for todo in loaded.todos], [DEFAULT_GROUP] * 2)
+        self.assertEqual(loaded.groups, [DEFAULT_GROUP])
+
+    def test_inbox_cannot_be_deleted(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.delete_group(DEFAULT_GROUP)
+        self.assertEqual(self.store.groups, [DEFAULT_GROUP])
+
+    def test_delete_missing_group_is_a_noop(self) -> None:
+        self.assertIsNone(self.store.delete_group("missing"))
 
 
 class ThemeTests(StoreTestCase):
@@ -269,6 +346,33 @@ class LoadTests(StoreTestCase):
         loaded = TodoStore(self.path)
         self.assertIn("Learning", loaded.groups)
         self.assertEqual(loaded.todos[0].group, "Learning")
+
+    def test_todos_without_description_load_with_an_empty_one(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "groups": ["Inbox"],
+                    "todos": [
+                        {
+                            "id": "abc",
+                            "text": "Old todo",
+                            "group": "Inbox",
+                            "done": False,
+                            "created": 123.0,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = TodoStore(self.path)
+        self.assertEqual(loaded.todos[0].description, "")
+        loaded.update(loaded.todos[0].id, "Old todo", "Now it has details")
+        self.assertEqual(
+            TodoStore(self.path).todos[0].description, "Now it has details"
+        )
 
     def test_groups_are_deduplicated_case_insensitively_on_load(self) -> None:
         self.path.parent.mkdir(parents=True)

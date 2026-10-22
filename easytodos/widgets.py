@@ -11,11 +11,11 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Input, OptionList, Static, Tabs
+from textual.widgets import Button, Input, OptionList, Static, Tabs, TextArea
 from textual.widgets.option_list import Option
 
 from . import APP_NAME
-from .model import MAX_TEXT_LENGTH, Todo
+from .model import MAX_DESCRIPTION_LENGTH, MAX_TEXT_LENGTH, Todo
 from .themes import ThemeChoice, ThemeSelection
 from .view import Row
 
@@ -27,6 +27,7 @@ HELP_SECTIONS = (
         (
             (("n", "a"), "Add a todo in the current group"),
             (("space", "enter", "x"), "Check or reopen the selected todo"),
+            (("e",), "Edit the selected todo and its description"),
             (("d", "Delete"), "Delete the selected todo"),
             (("j", "down"), "Move selection down"),
             (("k", "up"), "Move selection up"),
@@ -37,6 +38,7 @@ HELP_SECTIONS = (
         (
             (("g",), "Move selected todo to another group"),
             (("G",), "Create a new group"),
+            (("D",), "Delete a group; its todos move to Inbox"),
             (("left", "right", "[", "]"), "Previous or next view"),
             (("tab", "shift+tab"), "Cycle through views"),
         ),
@@ -59,6 +61,7 @@ HELP_SECTIONS = (
         "Dialogs",
         (
             (("enter",), "Save or confirm"),
+            (("ctrl+s",), "Save a todo from the description field"),
             (("escape",), "Cancel or close"),
         ),
     ),
@@ -79,7 +82,7 @@ def apply_size_classes(screen: Screen) -> None:
     screen.set_class(width < 50 or height < 11, "-tiny")
     screen.set_class(width < 60, "-narrow")
     screen.set_class(height < 4, "-micro")
-    screen.set_class(height < 2, "-nano")
+    screen.set_class(height < 3, "-nano")
 
 
 class ResponsiveScreenMixin:
@@ -109,6 +112,14 @@ class GroupClicked(Message):
         super().__init__()
 
 
+class ViewStep(Message):
+    """A compact view control requested the previous or next view."""
+
+    def __init__(self, step: int) -> None:
+        self.step = step
+        super().__init__()
+
+
 class TodoRow(Static):
     """A single todo line. Click selects; the checkbox or a double-click toggles."""
 
@@ -117,7 +128,9 @@ class TodoRow(Static):
     def __init__(self, todo: Todo, selected: bool = False) -> None:
         super().__init__(classes="todo-row", markup=False)
         self.todo = todo
-        self.tooltip = "Click to select | click the box or double-click to check"
+        self.tooltip = (
+            "Click to select | click the box or double-click to check | e edits"
+        )
         self.set_class(todo.done, "-done")
         self.set_class(selected, "-selected")
 
@@ -168,6 +181,7 @@ class TodoList(VerticalScroll):
     """Scrollable list which rebuilds rows from the current view state."""
 
     can_focus = False
+    ALLOW_SELECT = False
 
     def __init__(
         self,
@@ -246,6 +260,33 @@ class ActionButton(Button):
     can_focus = False
 
 
+class ViewArrow(Static):
+    """A one-cell mouse target for moving between views."""
+
+    can_focus = False
+    ALLOW_SELECT = False
+
+    def __init__(self, symbol: str, step: int, **kwargs) -> None:
+        super().__init__(Text(symbol), markup=False, **kwargs)
+        self.step = step
+        self.tooltip = "Previous view (left)" if step < 0 else "Next view (right)"
+
+    def on_click(self, event: events.Click) -> None:
+        if event.button == 1:
+            self.post_message(ViewStep(self.step))
+            event.stop()
+
+
+class ViewBar(Horizontal):
+    """Compact previous/current/next switcher for views that do not fit as tabs."""
+
+    def compose(self) -> ComposeResult:
+        yield ViewArrow("<", -1, classes="view-arrow", id="view-prev")
+        yield Static("All", id="view-name", markup=False)
+        yield ViewArrow(">", 1, classes="view-arrow", id="view-next")
+        yield Static("", id="view-bar-tail", markup=False)
+
+
 class HeaderBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield Static(APP_NAME, id="app-title")
@@ -256,10 +297,11 @@ class ActionBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield ActionButton("New", id="btn-new", tooltip="Add a todo (n)")
         yield ActionButton("Check", id="btn-toggle", tooltip="Check off (space)")
+        yield ActionButton("Edit", id="btn-edit", tooltip="Edit selected todo (e)")
         yield ActionButton(
             "Group",
             id="btn-group",
-            tooltip="Move to a group (g) | create a group (G)",
+            tooltip="Move to a group (g) | create (G) | delete (D)",
         )
         yield ActionButton("Delete", id="btn-delete", tooltip="Delete (d)")
         yield ActionButton(
@@ -316,7 +358,7 @@ class HelpModal(ResponsiveScreenMixin, ModalScreen[None]):
                             )
                 yield Static(
                     "Mouse: click to select, double-click to check, "
-                    "and use the wheel to scroll.",
+                    "use the wheel to scroll, and click Edit to change a todo.",
                     classes="help-note",
                     markup=False,
                 )
@@ -335,8 +377,112 @@ class HelpModal(ResponsiveScreenMixin, ModalScreen[None]):
         self.dismiss(None)
 
 
+class TodoEditorModal(ResponsiveScreenMixin, ModalScreen[tuple[str, str] | None]):
+    """Create or edit a todo title and its optional description."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+s", "save", "Save", show=False),
+    ]
+
+    def __init__(self, title: str, text: str = "", description: str = "") -> None:
+        super().__init__()
+        self.title_text = title
+        self.initial_text = text
+        self.initial_description = description
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog todo-dialog"):
+            yield Static(self.title_text, classes="dialog-title", markup=False)
+            yield Input(
+                value=self.initial_text,
+                placeholder="What needs doing?",
+                max_length=MAX_TEXT_LENGTH,
+                compact=True,
+                id="todo-text",
+            )
+            yield Static(
+                "Description (optional)",
+                classes="field-label",
+                markup=False,
+            )
+            yield TextArea(
+                self.initial_description,
+                placeholder="Add details for this todo...",
+                soft_wrap=True,
+                compact=True,
+                tab_behavior="focus",
+                id="todo-description",
+            )
+            yield Static("", classes="form-error", id="todo-error", markup=False)
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save", id="todo-save", variant="primary")
+                yield Button("Cancel", id="todo-cancel")
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one("#todo-text", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._save()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "todo-save":
+            self._save()
+        elif event.button.id == "todo-cancel":
+            self.dismiss(None)
+
+    def _show_error(self, message: str, widget: Input | TextArea) -> None:
+        widget.add_class("-invalid")
+        if self.has_class("-micro"):
+            self.app.notify(message, severity="error", timeout=5)
+            return
+        error = self.query_one("#todo-error", Static)
+        error.update(message)
+        error.add_class("-visible")
+        self.query_one(".todo-dialog").add_class("-error")
+
+    def _clear_error(self) -> None:
+        error = self.query_one("#todo-error", Static)
+        error.update("")
+        error.remove_class("-visible")
+        self.query_one(".todo-dialog").remove_class("-error")
+        self.query_one("#todo-text", Input).remove_class("-invalid")
+        self.query_one("#todo-description", TextArea).remove_class("-invalid")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._clear_error()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        self._clear_error()
+
+    def _save(self) -> None:
+        text_input = self.query_one("#todo-text", Input)
+        description_input = self.query_one("#todo-description", TextArea)
+        text = text_input.value.strip()
+        if not text:
+            self._show_error("Todo text cannot be empty.", text_input)
+            text_input.focus()
+            return
+        description = description_input.text.strip()
+        if len(description) > MAX_DESCRIPTION_LENGTH:
+            self._show_error(
+                f"Descriptions are limited to {MAX_DESCRIPTION_LENGTH} characters.",
+                description_input,
+            )
+            description_input.focus()
+            return
+        self.dismiss((text, description))
+
+    def action_save(self) -> None:
+        self._save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class TextPromptModal(ResponsiveScreenMixin, ModalScreen[str | None]):
-    """Single-line prompt used for new todos, group names, and edits."""
+    """Single-line prompt used for group names."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
@@ -395,12 +541,15 @@ class GroupPickerModal(ResponsiveScreenMixin, ModalScreen[str | object | None]):
         groups: list[str],
         counts: dict[str, tuple[int, int]],
         current: str | None,
+        *,
+        include_new: bool = True,
     ) -> None:
         super().__init__()
         self.title_text = title
         self.groups = groups
         self.counts = counts
         self.current = current
+        self.include_new = include_new
         self._option_values: dict[str, str | object] = {}
 
     def compose(self) -> ComposeResult:
@@ -417,13 +566,14 @@ class GroupPickerModal(ResponsiveScreenMixin, ModalScreen[str | object | None]):
                 overflow="ellipsis",
             )
             options.append(Option(label, id=option_id))
-        self._option_values["group-new"] = NEW_GROUP_CHOICE
-        options.append(
-            Option(
-                Text("+ New group...", style="italic", no_wrap=True),
-                id="group-new",
+        if self.include_new:
+            self._option_values["group-new"] = NEW_GROUP_CHOICE
+            options.append(
+                Option(
+                    Text("+ New group...", style="italic", no_wrap=True),
+                    id="group-new",
+                )
             )
-        )
 
         with Vertical(classes="dialog group-dialog"):
             yield Static(self.title_text, classes="dialog-title", markup=False)
@@ -437,6 +587,8 @@ class GroupPickerModal(ResponsiveScreenMixin, ModalScreen[str | object | None]):
         option_list.focus()
         if self.current in self.groups:
             option_list.highlighted = self.groups.index(self.current)
+        elif self.groups:
+            option_list.highlighted = 0
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
@@ -453,6 +605,8 @@ class GroupPickerModal(ResponsiveScreenMixin, ModalScreen[str | object | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
 class ThemePickerModal(ResponsiveScreenMixin, ModalScreen[ThemeSelection | None]):
     """Choose a theme and toggle a transparent background."""
 

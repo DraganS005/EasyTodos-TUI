@@ -38,7 +38,10 @@ from .widgets import (
     TextPromptModal,
     ThemePickerModal,
     TodoClicked,
+    TodoEditorModal,
     TodoList,
+    ViewBar,
+    ViewStep,
     ViewTabs,
     shorten,
 )
@@ -68,10 +71,12 @@ class TodoApp(App[None]):
         Binding("space", "toggle", "Check"),
         Binding("enter", "toggle", "Check", show=False),
         Binding("x", "toggle", "Check", show=False),
+        Binding("e", "edit", "Edit"),
         Binding("d", "delete", "Delete"),
         Binding("delete", "delete", "Delete", show=False),
         Binding("g", "move", "Group"),
         Binding("G", "new_group", "New group"),
+        Binding("D", "delete_group", "Delete group", show=False),
         Binding("h", "toggle_done", "Hide done"),
         Binding("t", "theme", "Theme"),
         Binding("j", "cursor_down", "Down", show=False),
@@ -138,6 +143,7 @@ class TodoApp(App[None]):
             active="view-all",
             id="views",
         )
+        yield ViewBar(id="view-bar")
         yield TodoList(rows, self.selected_id, self._empty_message())
         yield Static("", id="status", markup=False)
         yield ActionBar(id="actions")
@@ -146,9 +152,11 @@ class TodoApp(App[None]):
         {
             "add",
             "toggle",
+            "edit",
             "delete",
             "move",
             "new_group",
+            "delete_group",
             "toggle_done",
             "theme",
             "cursor_down",
@@ -264,16 +272,41 @@ class TodoApp(App[None]):
 
     # -- chrome --------------------------------------------------------------
 
+    def _tabs_overflow(self, screen: MainScreen, width: int) -> bool:
+        tabs = screen.query_one("#views", ViewTabs)
+        return sum(len(str(tab.label)) + 2 for tab in tabs.query(Tab)) > width
+
     def _update_chrome(self) -> None:
         if self.main_screen is None or not self.main_screen.is_mounted:
             return
         screen = self.main_screen
         width, height = screen.size
         tiny = width < 50 or height < 11
-        compact = width < 80 or height < 20
 
         screen.query_one("#app-stats", Static).update(
             f"{self.store.open_count} open, {self.store.done_count} done"
+        )
+
+        # A scrolling tab strip clips labels at very small widths. Swap it for
+        # an explicit previous / current / next control instead.
+        screen.set_class(self._tabs_overflow(screen, width), "-viewbar")
+        view_label = self.view if self.view is not None else "All"
+        if self.view is None:
+            open_count = self.store.open_count
+            total = len(self.store.todos)
+        else:
+            view_todos = [
+                todo for todo in self.store.todos if todo.group == self.view
+            ]
+            open_count = sum(not todo.done for todo in view_todos)
+            total = len(view_todos)
+        counts = f"{open_count}/{total}"
+        name_width = max(1, width - 6 - len(counts) - 1)
+        view_name = screen.query_one("#view-name", Static)
+        view_name.update(f"{shorten(view_label, name_width)} {counts}")
+        view_name.tooltip = (
+            f"View {view_label}: {open_count} open, {total} total. "
+            "Use < and > or the left/right keys."
         )
 
         if self.message:
@@ -291,7 +324,7 @@ class TodoApp(App[None]):
         screen.query_one("#status", Static).update(status)
 
         has_selection = self._selected_todo() is not None
-        for button_id in ("btn-toggle", "btn-group", "btn-delete"):
+        for button_id in ("btn-toggle", "btn-edit", "btn-group", "btn-delete"):
             screen.query_one(f"#{button_id}", ActionButton).disabled = not has_selection
 
         hide_label = "Hide done" if self.show_done else "Show done"
@@ -301,6 +334,7 @@ class TodoApp(App[None]):
             labels = {
                 "btn-new": "+",
                 "btn-toggle": "ok",
+                "btn-edit": "e",
                 "btn-group": "g",
                 "btn-delete": "x",
                 "btn-hide": "hide",
@@ -308,10 +342,11 @@ class TodoApp(App[None]):
                 "btn-quit": "quit",
                 "btn-help": help_label,
             }
-        elif compact:
+        elif width < 60:
             labels = {
                 "btn-new": "+ New",
                 "btn-toggle": "Check",
+                "btn-edit": "Edit",
                 "btn-group": "Group",
                 "btn-delete": "Del",
                 "btn-hide": hide_short,
@@ -319,10 +354,23 @@ class TodoApp(App[None]):
                 "btn-quit": "Quit",
                 "btn-help": help_label,
             }
+        elif width < 80:
+            labels = {
+                "btn-new": "+ New",
+                "btn-toggle": "Check",
+                "btn-edit": "Edit",
+                "btn-group": "Grp",
+                "btn-delete": "Del",
+                "btn-hide": hide_short,
+                "btn-theme": "Thm",
+                "btn-quit": "Quit",
+                "btn-help": help_label,
+            }
         elif width < 92:
             labels = {
                 "btn-new": "n New",
                 "btn-toggle": "sp Chk",
+                "btn-edit": "e Edit",
                 "btn-group": "g Grp",
                 "btn-delete": "d Del",
                 "btn-hide": f"h {hide_short}",
@@ -334,6 +382,7 @@ class TodoApp(App[None]):
             labels = {
                 "btn-new": "n New",
                 "btn-toggle": "sp Check",
+                "btn-edit": "e Edit",
                 "btn-group": "g Group",
                 "btn-delete": "d Del",
                 "btn-hide": f"h {hide_short}",
@@ -345,6 +394,7 @@ class TodoApp(App[None]):
             labels = {
                 "btn-new": "n New",
                 "btn-toggle": "space Check",
+                "btn-edit": "e Edit",
                 "btn-group": "g Group",
                 "btn-delete": "d Delete",
                 "btn-hide": f"h {hide_label}",
@@ -462,20 +512,25 @@ class TodoApp(App[None]):
         if group not in self.store.groups:
             group = DEFAULT_GROUP
         self.push_screen(
-            TextPromptModal(
-                f"New todo in {group}",
-                placeholder="What needs doing?",
-            ),
-            callback=lambda text: self._on_add_result(text, group),
+            TodoEditorModal(f"New todo in {group}"),
+            callback=lambda draft: self._on_add_result(draft, group),
         )
 
-    def _on_add_result(self, text: str | None, group: str) -> None:
-        if text:
-            self.run_worker(self._create_todo(text, group), exclusive=False)
+    def _on_add_result(
+        self,
+        draft: tuple[str, str] | None,
+        group: str,
+    ) -> None:
+        if draft is not None:
+            text, description = draft
+            self.run_worker(
+                self._create_todo(text, description, group),
+                exclusive=False,
+            )
 
-    async def _create_todo(self, text: str, group: str) -> None:
+    async def _create_todo(self, text: str, description: str, group: str) -> None:
         try:
-            todo = self.store.add(text, group)
+            todo = self.store.add(text, group, description=description)
         except (ValueError, StoreError) as exc:
             self._error(str(exc))
             return
@@ -483,6 +538,48 @@ class TodoApp(App[None]):
         self.selected_id = todo.id
         await self._refresh_rows()
         self._set_message(f"Added to {todo.group}.")
+
+    def action_edit(self) -> None:
+        todo = self._selected_todo()
+        if todo is None:
+            return
+        self.push_screen(
+            TodoEditorModal(
+                "Edit todo",
+                text=todo.text,
+                description=todo.description,
+            ),
+            callback=lambda draft: self._on_edit_result(todo.id, draft),
+        )
+
+    def _on_edit_result(
+        self,
+        todo_id: str,
+        draft: tuple[str, str] | None,
+    ) -> None:
+        if draft is not None:
+            text, description = draft
+            self.run_worker(
+                self._update_todo(todo_id, text, description),
+                exclusive=False,
+            )
+
+    async def _update_todo(
+        self,
+        todo_id: str,
+        text: str,
+        description: str,
+    ) -> None:
+        try:
+            todo = self.store.update(todo_id, text, description)
+        except (ValueError, StoreError) as exc:
+            self._error(str(exc))
+            return
+        if todo is None:
+            return
+        self.selected_id = todo.id
+        await self._refresh_rows()
+        self._set_message(f"Updated: {shorten(todo.text)}")
 
     async def _toggle(self, todo_id: str) -> None:
         todo = self.store.get(todo_id)
@@ -624,6 +721,60 @@ class TodoApp(App[None]):
         await self._set_view(group)
         self._set_message(f"Viewing {group}. Press n to add a todo.")
 
+    def action_delete_group(self) -> None:
+        groups = [
+            group
+            for group in self.store.groups
+            if group.casefold() != DEFAULT_GROUP.casefold()
+        ]
+        if not groups:
+            self._set_message("No groups to delete.")
+            return
+        counts = {
+            group: (
+                sum(not item.done and item.group == group for item in self.store.todos),
+                sum(item.group == group for item in self.store.todos),
+            )
+            for group in groups
+        }
+        self.push_screen(
+            GroupPickerModal(
+                "Delete group (todos move to Inbox)",
+                groups,
+                counts,
+                None,
+                include_new=False,
+            ),
+            callback=self._on_delete_group_choice,
+        )
+
+    def _on_delete_group_choice(self, choice: str | object | None) -> None:
+        if isinstance(choice, str):
+            self.run_worker(self._delete_group(choice), exclusive=False)
+
+    async def _delete_group(self, name: str) -> None:
+        try:
+            result = self.store.delete_group(name)
+        except (ValueError, StoreError) as exc:
+            self._error(str(exc))
+            return
+        if result is None:
+            return
+        group, moved = result
+        if self.view is not None and self.view.casefold() == group.casefold():
+            self.view = None
+        if self.active_group.casefold() == group.casefold():
+            self.active_group = DEFAULT_GROUP
+        await self._rebuild_tabs()
+        await self._refresh_rows()
+        if moved:
+            noun = "todo" if moved == 1 else "todos"
+            self._set_message(
+                f"Deleted group {group}. Moved {moved} {noun} to {DEFAULT_GROUP}."
+            )
+        else:
+            self._set_message(f"Deleted group {group}.")
+
     async def action_toggle_done(self) -> None:
         await self._toggle_show_done()
 
@@ -719,12 +870,18 @@ class TodoApp(App[None]):
         if event.group in self.store.groups and event.group != self.view:
             await self._set_view(event.group)
 
+    @on(ViewStep)
+    async def _view_step(self, event: ViewStep) -> None:
+        await self._cycle_view(event.step)
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "btn-new":
             self.action_add()
         elif button_id == "btn-toggle":
             await self.action_toggle()
+        elif button_id == "btn-edit":
+            self.action_edit()
         elif button_id == "btn-group":
             self.action_move()
         elif button_id == "btn-delete":

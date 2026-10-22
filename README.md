@@ -2,9 +2,9 @@
 
 A tiny, mouse-friendly todo list that lives in your terminal.
 
-EasyTodos-TUI keeps things simple: groups, fast keyboard shortcuts, a responsive
-layout for small terminals, and automatic local persistence. No account, no
-sync service, no network.
+EasyTodos-TUI keeps things simple: groups, optional todo descriptions, fast
+keyboard shortcuts, a responsive layout for small terminals, and automatic
+local persistence. No account, no sync service, no network.
 
 The interface is built to adapt to the available space. In narrow or short terminals, the
 key help and non-essential toolbar buttons disappear first, labels get shorter,
@@ -69,16 +69,24 @@ easytodos
 The basics:
 
 - Press `n`, type a todo, then press `enter`.
+- Press `tab` while adding a todo to write an optional description, then
+  `ctrl+s` or click **Save**.
+- Press `e` to open the selected todo and edit its title or description.
 - Press `space` to check a todo off.
-- Press `g` to move it to another group, or `G` to create a group.
-- Press `d` to delete it.
+- Press `g` to move it to another group, `G` to create a group, or `D` to
+  delete a group. Todos in a deleted group move to **Inbox**.
+- Press `d` to delete a todo.
 - Press `h` to hide or show completed todos.
 - Press `t` to change the color theme.
+- Press `?` or `F1` to see every shortcut.
 - Press `q` to quit.
 
 Use `tab` or the left/right arrows to switch between **All** and each group.
 Clicking works too: click a row to select it, click its checkbox to check it
 off, click a group header or tab to switch views, or use the toolbar buttons.
+In narrow layouts the tab strip becomes a compact `< view >` switcher so the
+current view and its open/total count stay readable. Use **Edit** on the
+toolbar to change the selected todo and its description.
 
 ### Keyboard shortcuts
 
@@ -86,17 +94,22 @@ off, click a group header or tab to switch views, or use the toolbar buttons.
 | --- | --- |
 | `n` / `a` | Add a todo |
 | `space` / `enter` / `x` | Check off or reopen |
+| `e` | Edit the selected todo and its description |
 | `d` / `Delete` | Delete the selected todo |
 | `g` | Move to another group |
 | `G` | Create a new group |
+| `D` | Delete a group; its todos move to **Inbox** |
 | `j` / `k`, `up` / `down` | Move the selection |
 | `left` / `right`, `[` / `]` | Previous / next view |
 | `tab` / `shift+tab` | Cycle through views |
 | `h` | Hide or show completed todos |
 | `t` | Open the theme picker |
+| `?` / `F1` | Open the shortcut help window |
 | `q` | Quit |
 
-In dialogs, `enter` saves or confirms and `escape` cancels.
+In single-line prompts, `enter` saves or confirms and `escape` cancels. In the
+todo editor, `tab` moves from the title into the description; use `ctrl+s`, the
+**Save** button, or `tab` to the button to save.
 
 ## Your data
 
@@ -113,8 +126,11 @@ easytodos --file ./my-todos.json
 env EASYTODOS_FILE=/path/to/todos.json easytodos
 ```
 
-The selected theme and transparent-background setting are saved there too. Data
-from the older `todo-tui` location is copied over automatically on first launch.
+Todo descriptions are stored alongside their titles as optional text. Existing
+todo files without descriptions still load normally, and any todo can gain or
+change a description through the editor. The selected theme and
+transparent-background setting are saved there too. Data from the older
+`todo-tui` location is copied over automatically on first launch.
 
 ## Themes
 

@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from textual.containers import VerticalScroll
-from textual.widgets import Input, OptionList, Tab
+from textual.widgets import Input, OptionList, Tab, TextArea
 
-from easytodos.model import TodoStore
+from easytodos.model import MAX_DESCRIPTION_LENGTH, TodoStore
 from easytodos.themes import THEME_CHOICES
 from easytodos.ui import TodoApp
 from easytodos.widgets import (
@@ -21,6 +21,7 @@ from easytodos.widgets import (
     MainScreen,
     TextPromptModal,
     ThemePickerModal,
+    TodoEditorModal,
     TodoRow,
 )
 
@@ -63,6 +64,12 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
     def row_texts(self) -> list[str]:
         return [row.todo.text for row in self.rows()]
 
+    def assert_inside(self, child, parent) -> None:
+        self.assertGreaterEqual(child.region.x, parent.region.x)
+        self.assertGreaterEqual(child.region.y, parent.region.y)
+        self.assertLessEqual(child.region.right, parent.region.right)
+        self.assertLessEqual(child.region.bottom, parent.region.bottom)
+
     def selected_row(self) -> TodoRow:
         selected = [row for row in self.rows() if row.has_class("-selected")]
         self.assertEqual(len(selected), 1, "exactly one row should be selected")
@@ -101,10 +108,48 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(labels["btn-new"], "n New")
             self.assertEqual(labels["btn-toggle"], "space Check")
+            self.assertEqual(labels["btn-edit"], "e Edit")
             self.assertEqual(labels["btn-delete"], "d Delete")
             self.assertEqual(labels["btn-help"], "? Help")
+            self.assertTrue(screen.query_one("#btn-edit", ActionButton).disabled)
             for button in screen.query(ActionButton):
                 self.assertLessEqual(button.region.right, screen.size.width)
+
+    async def test_footer_edit_button_opens_the_editor(self) -> None:
+        todo = self.store.add("edit from footer")
+        async with self.running_app(size=(120, 24)) as pilot:
+            edit_button = self.app.main_screen.query_one("#btn-edit", ActionButton)
+            self.assertFalse(edit_button.disabled)
+            await pilot.click("#btn-edit")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal),
+                "edit modal from footer",
+            )
+            self.assertEqual(
+                self.app.screen.query_one("#todo-text", Input).value,
+                todo.text,
+            )
+
+    async def test_footer_fits_at_every_supported_width(self) -> None:
+        self.store.add("keep the footer honest")
+        async with self.running_app(size=(120, 24)) as pilot:
+            screen = self.app.main_screen
+            for width in (20, 24, 30, 40, 50, 60, 79, 80, 91, 92, 96, 97, 101, 102, 120):
+                await pilot.resize_terminal(width, 24)
+                await pilot.pause(0.05)
+                visible = [
+                    button for button in screen.query(ActionButton) if button.display
+                ]
+                self.assertTrue(
+                    any(button.id == "btn-edit" for button in visible),
+                    f"Edit button missing at width {width}",
+                )
+                for button in visible:
+                    self.assertLessEqual(
+                        button.region.right,
+                        width,
+                        f"{button.id} overflows at width {width}",
+                    )
 
     async def test_help_window_lists_every_shortcut_and_scrolls(self) -> None:
         async with self.running_app(size=(80, 20)) as pilot:
@@ -165,7 +210,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
         async with self.running_app() as pilot:
             await pilot.press("n")
             await self.wait_until(
-                lambda: isinstance(self.app.screen, TextPromptModal), "add modal"
+                lambda: isinstance(self.app.screen, TodoEditorModal), "add modal"
             )
             await pilot.press(*"new item")
             await pilot.press("enter")
@@ -176,23 +221,136 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
 
             saved = self.store.todos[-1]
             self.assertEqual(saved.text, "new item")
+            self.assertEqual(saved.description, "")
             self.assertEqual(self.app.selected_id, saved.id)
             reloaded = TodoStore(self.path)
             self.assertEqual([todo.text for todo in reloaded.todos], ["new item"])
+
+    async def test_add_with_a_description_from_the_mouse(self) -> None:
+        async with self.running_app() as pilot:
+            await pilot.click("#btn-new")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal), "add modal"
+            )
+            await pilot.press(*"book flights")
+            await pilot.press("tab")
+            await pilot.press(*"Check the airline site")
+            await pilot.click("#todo-save")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main screen"
+            )
+            await self.wait_until(
+                lambda: self.store.todos
+                and self.store.todos[0].description == "Check the airline site",
+                "description saved",
+            )
+            self.assertEqual(self.store.todos[0].text, "book flights")
+            self.assertEqual(
+                TodoStore(self.path).todos[0].description,
+                "Check the airline site",
+            )
+
+    async def test_editor_saves_description_with_ctrl_s(self) -> None:
+        async with self.running_app() as pilot:
+            await pilot.press("n")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal), "add modal"
+            )
+            await pilot.press(*"keyboard todo")
+            await pilot.press("tab")
+            await pilot.press(*"keyboard details")
+            await pilot.press("ctrl+s")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main screen"
+            )
+            await self.wait_until(
+                lambda: self.store.todos
+                and self.store.todos[0].description == "keyboard details",
+                "description saved",
+            )
+            self.assertEqual(self.store.todos[0].text, "keyboard todo")
 
     async def test_add_from_mouse_toolbar_and_save_button(self) -> None:
         async with self.running_app() as pilot:
             await pilot.click("#btn-new")
             await self.wait_until(
-                lambda: isinstance(self.app.screen, TextPromptModal), "add modal"
+                lambda: isinstance(self.app.screen, TodoEditorModal), "add modal"
             )
             await pilot.press(*"clicked add")
-            await pilot.click("#prompt-save")
+            await pilot.click("#todo-save")
             await self.wait_until(
                 lambda: isinstance(self.app.screen, MainScreen), "main screen"
             )
             await self.wait_until(lambda: "clicked add" in self.row_texts(), "new row")
             self.assertEqual(self.store.todos[0].text, "clicked add")
+
+    async def test_edit_todo_title_and_description(self) -> None:
+        todo = self.store.add("old title", description="old details")
+        async with self.running_app() as pilot:
+            await pilot.press("e")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal), "edit modal"
+            )
+            self.assertEqual(
+                self.app.screen.query_one("#todo-text", Input).value,
+                "old title",
+            )
+            self.assertEqual(
+                self.app.screen.query_one("#todo-description", TextArea).text,
+                "old details",
+            )
+
+            self.app.screen.query_one("#todo-text", Input).value = "new title"
+            self.app.screen.query_one("#todo-description", TextArea).text = (
+                "new details\nsecond line"
+            )
+            await pilot.click("#todo-save")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main screen"
+            )
+            await self.wait_until(
+                lambda: self.store.get(todo.id).text == "new title", "todo edited"
+            )
+
+            self.assertEqual(
+                self.store.get(todo.id).description,
+                "new details\nsecond line",
+            )
+            self.assertEqual(self.row_texts(), ["new title"])
+            self.assertEqual(self.app.selected_id, todo.id)
+            reloaded = TodoStore(self.path).todos[0]
+            self.assertEqual(reloaded.text, "new title")
+            self.assertEqual(reloaded.description, "new details\nsecond line")
+
+    async def test_edit_rejects_an_empty_title_without_closing(self) -> None:
+        self.store.add("keep me")
+        async with self.running_app() as pilot:
+            await pilot.press("e")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal), "edit modal"
+            )
+            self.app.screen.query_one("#todo-text", Input).value = "   "
+            await pilot.click("#todo-save")
+            await pilot.pause()
+            self.assertIsInstance(self.app.screen, TodoEditorModal)
+            self.assertTrue(self.app.screen.query_one("#todo-error").display)
+            self.assertEqual(self.store.todos[0].text, "keep me")
+
+    async def test_edit_rejects_an_overlong_description_without_closing(self) -> None:
+        todo = self.store.add("keep me")
+        async with self.running_app() as pilot:
+            await pilot.press("e")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal), "edit modal"
+            )
+            description = self.app.screen.query_one("#todo-description", TextArea)
+            description.text = "x" * (MAX_DESCRIPTION_LENGTH + 1)
+            await pilot.click("#todo-save")
+            await pilot.pause()
+            self.assertIsInstance(self.app.screen, TodoEditorModal)
+            self.assertTrue(self.app.screen.query_one("#todo-error").display)
+            self.assertTrue(description.has_class("-invalid"))
+            self.assertEqual(self.store.get(todo.id).description, "")
 
     async def test_toggle_keeps_selection_and_scrolls_it_into_view(self) -> None:
         todos = [self.store.add(f"item {index}") for index in range(36)]
@@ -307,6 +465,43 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.app.selected_id, work.id)
             self.assertNotEqual(self.app.selected_id, inbox.id)
 
+    async def test_compact_view_bar_when_tabs_do_not_fit(self) -> None:
+        self.store.add("inbox item")
+        self.store.add("work item", "Work")
+        for group in ("Home", "Errands", "Projects", "Someday"):
+            self.store.add_group(group)
+        async with self.running_app(size=(24, 6)) as pilot:
+            screen = self.app.main_screen
+            self.assertTrue(screen.has_class("-viewbar"))
+            self.assertFalse(screen.query_one("#views").display)
+            self.assertTrue(screen.query_one("#view-bar").display)
+            self.assertLessEqual(
+                screen.query_one("#view-bar").region.right, screen.size.width
+            )
+            name = screen.query_one("#view-name")
+            self.assertIn("All", str(name.render()))
+
+            await pilot.press("right")
+            await self.wait_until(lambda: self.app.view == "Inbox", "inbox view")
+            self.assertIn("Inbox", str(name.render()))
+
+            await pilot.click("#view-next")
+            await self.wait_until(lambda: self.app.view == "Work", "work view")
+            self.assertIn("Work", str(name.render()))
+
+            await pilot.click("#view-prev")
+            await self.wait_until(lambda: self.app.view == "Inbox", "inbox again")
+            self.assertIn("Inbox", str(name.render()))
+
+    async def test_tabs_are_used_when_every_view_fits(self) -> None:
+        for group in ("Work", "Home", "Errands", "Projects", "Someday"):
+            self.store.add_group(group)
+        async with self.running_app(size=(60, 12)):
+            screen = self.app.main_screen
+            self.assertFalse(screen.has_class("-viewbar"))
+            self.assertTrue(screen.query_one("#views").display)
+            self.assertFalse(screen.query_one("#view-bar").display)
+
     async def test_move_todo_with_group_picker(self) -> None:
         todo = self.store.add("move me")
         self.store.add_group("Work")
@@ -331,6 +526,54 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
                 lambda: self.store.get(todo.id).group == "Work", "todo moved"
             )
             self.assertEqual(self.app.selected_id, todo.id)
+
+    async def test_delete_group_moves_todos_and_switches_view(self) -> None:
+        todo = self.store.add("work item", "Work")
+        self.store.add_group("Empty")
+        async with self.running_app() as pilot:
+            work_tab = self.app.main_screen.query_one("#view-2", Tab)
+            await pilot.click(work_tab, offset=(1, 0))
+            await self.wait_until(lambda: self.app.view == "Work", "work view")
+
+            await pilot.press("D")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, GroupPickerModal),
+                "delete group modal",
+            )
+            options = self.app.screen.query_one("#group-options", OptionList)
+            self.assertEqual(options.option_count, 2)  # Work + Empty, no Inbox/new
+            option_text = " ".join(
+                str(options.get_option_at_index(index).prompt)
+                for index in range(options.option_count)
+            )
+            self.assertNotIn("Inbox", option_text)
+            self.assertNotIn("New group", option_text)
+            self.assertEqual(options.highlighted, 0)
+
+            await pilot.press("enter")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen), "main screen"
+            )
+            await self.wait_until(
+                lambda: "Work" not in self.store.groups, "group deleted"
+            )
+            await pilot.pause()
+
+            self.assertEqual(todo.group, "Inbox")
+            self.assertIsNone(self.app.view)
+            self.assertEqual(self.store.groups, ["Inbox", "Empty"])
+            self.assertEqual(self.app.main_screen.query_one("#views").active, "view-all")
+            self.assertEqual(self.row_texts(), ["work item"])
+            self.assertEqual(self.app.selected_id, todo.id)
+            self.assertIn("Moved 1 todo to Inbox", self.app.message)
+            self.assertEqual(TodoStore(self.path).groups, ["Inbox", "Empty"])
+
+    async def test_delete_group_is_unavailable_when_only_inbox_remains(self) -> None:
+        async with self.running_app() as pilot:
+            await pilot.press("D")
+            await pilot.pause()
+            self.assertIsInstance(self.app.screen, MainScreen)
+            self.assertEqual(self.app.message, "No groups to delete.")
 
     async def test_move_todo_to_a_new_group_from_picker(self) -> None:
         todo = self.store.add("move me")
@@ -377,7 +620,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("n")
             await self.wait_until(
-                lambda: isinstance(self.app.screen, TextPromptModal), "todo prompt"
+                lambda: isinstance(self.app.screen, TodoEditorModal), "todo prompt"
             )
             self.assertIn(
                 "Errands",
@@ -537,6 +780,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_tiny_layouts_and_modal_fit(self) -> None:
         for index in range(12):
             self.store.add(f"todo {index}")
+        self.store.add_group("Work")
         async with self.running_app() as pilot:
             await pilot.resize_terminal(50, 20)
             await pilot.pause(0.05)
@@ -568,6 +812,7 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(labels["btn-new"], "+")
             self.assertEqual(labels["btn-toggle"], "ok")
+            self.assertEqual(labels["btn-edit"], "e")
             self.assertEqual(labels["btn-help"], "?")
             self.assertNotIn("btn-hide", labels)
             self.assertNotIn("btn-theme", labels)
@@ -580,6 +825,49 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
                 self.app.main_screen.query_one("#todo-list").size.height, 1
             )
 
+            await pilot.press("n")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal),
+                "20x4 todo editor",
+            )
+            dialog = self.app.screen.query_one(".todo-dialog")
+            self.assertTrue(self.app.screen.query_one(".dialog-title").display)
+            for widget in (
+                self.app.screen.query_one(Input),
+                self.app.screen.query_one(TextArea),
+                self.app.screen.query_one("#todo-save"),
+                self.app.screen.query_one("#todo-cancel"),
+            ):
+                self.assert_inside(widget, dialog)
+
+            # An inline error must not push the actions outside the dialog.
+            self.app.screen.query_one(Input).value = "   "
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertFalse(self.app.screen.query_one(".dialog-title").display)
+            self.assertTrue(self.app.screen.query_one("#todo-error").display)
+            self.assertTrue(self.app.screen.query_one(Input).has_class("-invalid"))
+            for widget in (
+                self.app.screen.query_one(Input),
+                self.app.screen.query_one(TextArea),
+                self.app.screen.query_one("#todo-error"),
+                self.app.screen.query_one("#todo-save"),
+                self.app.screen.query_one("#todo-cancel"),
+            ):
+                self.assert_inside(widget, dialog)
+
+            # Editing the field clears the error and restores the title row.
+            await pilot.press("x")
+            await pilot.pause()
+            self.assertTrue(self.app.screen.query_one(".dialog-title").display)
+            self.assertFalse(self.app.screen.query_one("#todo-error").display)
+            self.assertFalse(self.app.screen.query_one(Input).has_class("-invalid"))
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after 20x4 editor",
+            )
+
             await pilot.resize_terminal(20, 3)
             await pilot.pause(0.05)
             self.assertIn("-micro", self.app.screen.classes)
@@ -588,16 +876,113 @@ class TodoAppTests(unittest.IsolatedAsyncioTestCase):
                 self.app.main_screen.query_one("#todo-list").size.height, 1
             )
 
+            await pilot.press("n")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal),
+                "20x3 todo editor",
+            )
+            dialog = self.app.screen.query_one(".todo-dialog")
+            self.assertLessEqual(dialog.region.height, 3)
+            self.assertFalse(self.app.screen.query_one(".dialog-title").display)
+            for widget in (
+                self.app.screen.query_one(Input),
+                self.app.screen.query_one(TextArea),
+                self.app.screen.query_one("#todo-save"),
+                self.app.screen.query_one("#todo-cancel"),
+            ):
+                self.assert_inside(widget, dialog)
+
+            # Micro layouts use a notification instead of an inline error row.
+            self.app.screen.query_one(Input).value = "   "
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertFalse(self.app.screen.query_one("#todo-error").display)
+            self.assertTrue(self.app.screen.query_one(Input).has_class("-invalid"))
+            for widget in (
+                self.app.screen.query_one(Input),
+                self.app.screen.query_one(TextArea),
+                self.app.screen.query_one("#todo-save"),
+                self.app.screen.query_one("#todo-cancel"),
+            ):
+                self.assert_inside(widget, dialog)
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after 20x3 editor",
+            )
+
+            await pilot.press("D")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, GroupPickerModal),
+                "20x3 delete group modal",
+            )
+            group_dialog = self.app.screen.query_one(".group-dialog")
+            group_options = self.app.screen.query_one("#group-options", OptionList)
+            group_cancel = self.app.screen.query_one("#group-cancel")
+            for widget in (group_options, group_cancel):
+                self.assert_inside(widget, group_dialog)
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after 20x3 group modal",
+            )
+
+            await pilot.resize_terminal(20, 2)
+            await pilot.pause(0.05)
+            self.assertIn("-nano", self.app.screen.classes)
+            self.assertFalse(self.app.main_screen.query_one("#views").display)
+            self.assertGreaterEqual(
+                self.app.main_screen.query_one("#todo-list").size.height, 2
+            )
+
+            await pilot.press("n")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, TodoEditorModal),
+                "20x2 todo editor",
+            )
+            dialog = self.app.screen.query_one(".todo-dialog")
+            self.assertLessEqual(dialog.region.height, 2)
+            self.assertFalse(self.app.screen.query_one(TextArea).display)
+            for widget in (
+                self.app.screen.query_one(Input),
+                self.app.screen.query_one("#todo-save"),
+                self.app.screen.query_one("#todo-cancel"),
+            ):
+                self.assert_inside(widget, dialog)
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after 20x2 editor",
+            )
+
+            await pilot.press("D")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, GroupPickerModal),
+                "20x2 delete group modal",
+            )
+            group_dialog = self.app.screen.query_one(".group-dialog")
+            for widget in (
+                self.app.screen.query_one("#group-options", OptionList),
+                self.app.screen.query_one("#group-cancel"),
+            ):
+                self.assert_inside(widget, group_dialog)
+            await pilot.press("escape")
+            await self.wait_until(
+                lambda: isinstance(self.app.screen, MainScreen),
+                "main after 20x2 group modal",
+            )
+
             await pilot.resize_terminal(20, 6)
             await pilot.pause(0.05)
             await pilot.press("n")
             await self.wait_until(
-                lambda: isinstance(self.app.screen, TextPromptModal), "tiny prompt"
+                lambda: isinstance(self.app.screen, TodoEditorModal), "tiny prompt"
             )
-            dialog = self.app.screen.query_one(".dialog")
+            dialog = self.app.screen.query_one(".todo-dialog")
             self.assertLessEqual(dialog.region.width, 20)
             self.assertLessEqual(dialog.region.height, 6)
             self.assertTrue(self.app.screen.query_one(Input).display)
+            self.assertTrue(self.app.screen.query_one(TextArea).display)
             await pilot.press("escape")
             await self.wait_until(
                 lambda: isinstance(self.app.screen, MainScreen), "main after escape"

@@ -62,11 +62,62 @@ Screen {
     text-style: bold;
 }
 
+#view-bar {
+    display: none;
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#view-bar .view-arrow {
+    width: 1;
+    height: 1;
+    padding: 0;
+    background: $primary-darken-2;
+    color: auto 90%;
+    text-align: center;
+    content-align: center middle;
+    text-wrap: nowrap;
+    pointer: pointer;
+}
+
+#view-bar .view-arrow:hover {
+    background: $accent;
+    color: auto 90%;
+}
+
+#view-name {
+    width: 1fr;
+    height: 1;
+    padding: 0 1;
+    color: $text;
+    text-style: bold;
+    text-align: center;
+    content-align: center middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#view-bar-tail {
+    width: 1;
+    height: 1;
+    background: transparent;
+}
+
+.-viewbar #views {
+    display: none;
+}
+
+.-viewbar #view-bar {
+    display: block;
+}
+
 /* -- list ----------------------------------------------------------------- */
 
 #todo-list {
     height: 1fr;
     padding: 0;
+    background: $surface;
     scrollbar-size-vertical: 1;
 }
 
@@ -155,7 +206,7 @@ Screen {
 #actions Button {
     height: 1;
     min-width: 0;
-    padding: 0 1;
+    padding: 0;
     margin: 0 1 0 0;
     border: none;
     background: $primary-darken-2;
@@ -194,6 +245,10 @@ Screen {
     margin: 0 1 0 0;
 }
 
+.-narrow #actions Button {
+    margin: 0;
+}
+
 .-compact .group-header {
     margin-top: 0;
 }
@@ -220,16 +275,12 @@ Screen {
 }
 
 .-tiny #actions {
-    padding: 0;
-}
-
-.-tiny #actions-spacer {
-    display: none;
+    padding: 0 1;
 }
 
 .-tiny #actions Button {
     padding: 0;
-    margin: 0 1 0 0;
+    margin: 0;
 }
 
 .-tiny #btn-help {
@@ -243,7 +294,8 @@ Screen {
     display: none;
 }
 
-.-nano #views {
+.-nano #views,
+.-nano #view-bar {
     display: none;
 }
 
@@ -258,6 +310,8 @@ Screen.-transparent {
 }
 
 Screen.-transparent #views,
+Screen.-transparent #view-bar,
+Screen.-transparent #todo-list,
 Screen.-transparent #status,
 Screen.-transparent #actions,
 Screen.-transparent .group-header {
@@ -368,8 +422,97 @@ ModalScreen {
     max-height: 100%;
 }
 
+.-nano .dialog-title {
+    display: none;
+}
+
 .-tiny {
     background: $surface;
+}
+
+/* -- todo editor ---------------------------------------------------------- */
+
+.todo-dialog {
+    width: 68;
+    max-width: 94%;
+}
+
+.todo-dialog .field-label {
+    width: 100%;
+    height: 1;
+    margin-top: 1;
+    color: $text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#todo-description {
+    width: 100%;
+    height: 6;
+    margin-top: 0;
+    padding: 0 1;
+    border: none;
+    background: $panel;
+    scrollbar-size-vertical: 1;
+}
+
+#todo-description.-invalid {
+    background-tint: $error 20%;
+}
+
+.todo-dialog .form-error {
+    display: none;
+    width: 100%;
+    height: 1;
+    color: $error;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.todo-dialog .form-error.-visible {
+    display: block;
+}
+
+.-compact .todo-dialog {
+    padding: 0 1;
+}
+
+.-compact .todo-dialog .field-label {
+    display: none;
+}
+
+.-compact .todo-dialog .dialog-buttons {
+    margin-top: 0;
+}
+
+.-compact #todo-description {
+    height: 3;
+}
+
+.-tiny .todo-dialog {
+    height: 100%;
+}
+
+.-tiny #todo-description {
+    height: 1fr;
+}
+
+.-nano #todo-description {
+    display: none;
+}
+
+/* At the shortest sizes the dialog title makes way for the fields. */
+.-micro .todo-dialog .dialog-title {
+    display: none;
+}
+
+.-micro .todo-dialog .form-error {
+    display: none;
+}
+
+/* Keep the buttons on screen when an inline error adds a row. */
+.-tiny .todo-dialog.-error .dialog-title {
+    display: none;
 }
 
 /* -- theme picker --------------------------------------------------------- */

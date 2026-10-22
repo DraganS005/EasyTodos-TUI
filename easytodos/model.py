@@ -21,11 +21,23 @@ DEFAULT_GROUP = "Inbox"
 DEFAULT_THEME = "default"
 DATA_VERSION = 1
 MAX_TEXT_LENGTH = 500
+MAX_DESCRIPTION_LENGTH = 2000
 MAX_GROUP_LENGTH = 40
 
 
 class StoreError(Exception):
     """Raised when the todo file cannot be read or written."""
+
+
+def _clean_description(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("description must be a string")
+    value = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(value) > MAX_DESCRIPTION_LENGTH:
+        raise ValueError(
+            f"description is longer than {MAX_DESCRIPTION_LENGTH} characters"
+        )
+    return value
 
 
 def _clean_group(name: str) -> str:
@@ -49,11 +61,13 @@ class Todo:
     done: bool = False
     created: float = field(default_factory=time.time)
     completed_at: float | None = None
+    description: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "text": self.text,
+            "description": self.description,
             "group": self.group,
             "done": self.done,
             "created": self.created,
@@ -70,6 +84,8 @@ class Todo:
         text = text.strip()
         if len(text) > MAX_TEXT_LENGTH:
             raise ValueError(f"text is longer than {MAX_TEXT_LENGTH} characters")
+
+        description = _clean_description(raw.get("description", ""))
 
         group = raw.get("group", DEFAULT_GROUP)
         if not isinstance(group, str):
@@ -100,6 +116,7 @@ class Todo:
             done=done,
             created=float(created),
             completed_at=float(completed_at) if completed_at is not None else None,
+            description=description,
         )
 
 
@@ -307,19 +324,42 @@ class TodoStore:
 
     # -- mutations -----------------------------------------------------------
 
-    def add(self, text: str, group: str | None = None) -> Todo:
+    def add(
+        self,
+        text: str,
+        group: str | None = None,
+        description: str = "",
+    ) -> Todo:
         text = text.strip()
         if not text:
             raise ValueError("Todo text cannot be empty.")
         if len(text) > MAX_TEXT_LENGTH:
             raise ValueError(f"Todo text is limited to {MAX_TEXT_LENGTH} characters.")
+        description = _clean_description(description)
 
         todo = Todo(
             id=uuid.uuid4().hex[:12],
             text=text,
             group=self._ensure_group(group or DEFAULT_GROUP),
+            description=description,
         )
         self.todos.append(todo)
+        self.save()
+        return todo
+
+    def update(self, todo_id: str, text: str, description: str = "") -> Todo | None:
+        """Update a todo's title and description."""
+        todo = self.get(todo_id)
+        if todo is None:
+            return None
+        text = text.strip()
+        if not text:
+            raise ValueError("Todo text cannot be empty.")
+        if len(text) > MAX_TEXT_LENGTH:
+            raise ValueError(f"Todo text is limited to {MAX_TEXT_LENGTH} characters.")
+        description = _clean_description(description)
+        todo.text = text
+        todo.description = description
         self.save()
         return todo
 
@@ -331,6 +371,25 @@ class TodoStore:
         self.groups.append(clean)
         self.save()
         return clean
+
+    def delete_group(self, name: str) -> tuple[str, int] | None:
+        """Delete a group and move any todos in it back to Inbox."""
+        group = self.find_group(name)
+        if group is None:
+            return None
+        if group.casefold() == DEFAULT_GROUP.casefold():
+            raise ValueError("The Inbox group cannot be deleted.")
+
+        moved = 0
+        for todo in self.todos:
+            if todo.group.casefold() == group.casefold():
+                todo.group = DEFAULT_GROUP
+                moved += 1
+        self.groups = [
+            item for item in self.groups if item.casefold() != group.casefold()
+        ]
+        self.save()
+        return group, moved
 
     def set_appearance(self, theme: str, transparent: bool) -> tuple[str, bool]:
         """Persist the selected theme and transparent-background setting."""
