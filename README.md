@@ -6,23 +6,12 @@ EasyTodos-TUI keeps things simple: groups, fast keyboard shortcuts, a responsive
 layout for small terminals, and automatic local persistence. No account, no
 sync service, no network.
 
-- **App:** EasyTodos-TUI
-- **Command:** `easytodos`
-- **Requires:** Python 3.10+ and an interactive terminal
+The interface is built to adapt to the available space. In narrow or short terminals, the
+key help and non-essential toolbar buttons disappear first, labels get shorter,
+and the todo list keeps the full width. Built to be fully usable in small terminal 
+windows inside other workspaces.
 
-```text
- easytodos                                                    2 open, 1 done
- All  Inbox  Home  Work
- Inbox  (0/1 done)
- [ ] Read a chapter
- Home  (0/2 done)
- [ ] Buy milk and eggs
- [ ] Call the plumber
- Work  (1/1 done)
- [x] Finish the report
- Viewing all groups
- n New   space Check   g Group   d Delete   h Hide done   t Theme   q Quit   ? Help
-```
+- **Requires:** Python 3.10+ and an interactive terminal
 
 ## Install
 
@@ -91,10 +80,6 @@ Use `tab` or the left/right arrows to switch between **All** and each group.
 Clicking works too: click a row to select it, click its checkbox to check it
 off, click a group header or tab to switch views, or use the toolbar buttons.
 
-The shortcut keys are shown on the colored footer. Click **Help** (or press
-`?` / `F1`) to open a scrollable window listing every shortcut with a short
-explanation.
-
 ### Keyboard shortcuts
 
 | Key | Action |
@@ -109,7 +94,6 @@ explanation.
 | `tab` / `shift+tab` | Cycle through views |
 | `h` | Hide or show completed todos |
 | `t` | Open the theme picker |
-| `?` / `F1` | Open the shortcut help window |
 | `q` | Quit |
 
 In dialogs, `enter` saves or confirms and `escape` cancels.
@@ -141,13 +125,6 @@ Dracula, Nord, Tokyo Night, Solarized, and light options.
 
 The picker also has a **Transparent background** option, which lets your
 terminal's own background show through.
-
-## Small terminals
-
-The interface adapts to the available space. In narrow or short terminals,
-non-essential toolbar buttons disappear first, labels get shorter, and the todo
-list keeps the full width. The **Help** button stays available; keyboard
-shortcuts continue to work even when their buttons are hidden.
 
 ## Development
 
